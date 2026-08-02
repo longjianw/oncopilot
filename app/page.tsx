@@ -30,6 +30,7 @@ export default function Home() {
   const [selectedId, setSelectedId] = useState("SYN-A01");
   const [doneTasks, setDoneTasks] = useState<Record<string, boolean>>({});
   const [confirmed, setConfirmed] = useState(false);
+  const [workflowStage, setWorkflowStage] = useState(0);
 
   const visiblePatients = useMemo(() => {
     const source = mode === "mine" ? patients.filter((patient) => patient.mine) : patients;
@@ -39,6 +40,20 @@ export default function Home() {
   }, [mode, query]);
 
   const selectedPatient = visiblePatients.find((patient) => patient.id === selectedId) ?? visiblePatients[0] ?? patients[0];
+  const isWorkflowCase = selectedPatient.id === "SYN-A01";
+  const currentChange = isWorkflowCase
+    ? workflowStage >= 2
+      ? "新增血常规较上一份合成报告出现白细胞、中性粒细胞及血小板下降。"
+      : workflowStage >= 1
+        ? "已收到一份新报告，尚未完成结构化解析。"
+        : "今日尚无新增资料，等待检验或检查回报。"
+    : selectedPatient.change;
+  const currentTask = isWorkflowCase
+    ? workflowStage >= 3
+      ? "先核对当前生命体征与症状，再由主管医师复核风险。"
+      : "尚未生成新的今日待办。"
+    : selectedPatient.task;
+  const currentEvidence = isWorkflowCase && workflowStage >= 1 ? "LAB-SYN-082 · 完全合成报告" : selectedPatient.evidence;
 
   const switchMode = (next: ListMode) => {
     setMode(next); setQuery(""); setConfirmed(false);
@@ -94,17 +109,58 @@ export default function Home() {
           <aside className="patient-card">
             <div className="patient-card-head"><div><span>{selectedPatient.bed}床 · {selectedPatient.id}</span><h2>{selectedPatient.label}</h2><p>{selectedPatient.sex} · {selectedPatient.ageBand} · 住院第{selectedPatient.days}天</p></div><span className={`risk risk-${selectedPatient.tone}`}><i />{selectedPatient.risk}</span></div>
             <dl className="patient-facts"><div><dt>主要诊断</dt><dd>{selectedPatient.diagnosis}</dd></div><div><dt>分管范围</dt><dd>{selectedPatient.mine ? "我的分管患者" : selectedPatient.doctor}</dd></div></dl>
+
+            {isWorkflowCase && (
+              <section className="workflow-box">
+                <div className="workflow-heading"><div><span>可交互演示</span><strong>新增报告处理闭环</strong></div><small>固定规则演示 · 尚未接入真实模型</small></div>
+                <div className="workflow-steps" aria-label="处理进度">
+                  {["新增报告", "AI识别", "生成待办", "医生核实"].map((label, index) => {
+                    const step = index + 1;
+                    const reached = step <= workflowStage || (step === 4 && confirmed);
+                    const current = step === workflowStage + 1 && !confirmed;
+                    return <span key={label} className={`${reached ? "done" : ""} ${current ? "current" : ""}`}><i>{reached ? "✓" : step}</i>{label}</span>;
+                  })}
+                </div>
+
+                {workflowStage === 0 && <div className="workflow-empty"><p>模拟收到一份完全合成的血常规报告，体验AI如何把新资料转成管床待办。</p><button type="button" onClick={() => setWorkflowStage(1)}>+ 模拟新增检验报告</button></div>}
+
+                {workflowStage >= 1 && (
+                  <div className="synthetic-report">
+                    <div><span>新资料 · LAB-SYN-082</span><strong>血常规（完全合成）</strong><small>采集时间 08-03 08:10 · 不对应任何真实患者</small></div>
+                    <dl>
+                      <div><dt>白细胞</dt><dd>1.8 ×10⁹/L <b>低</b></dd></div>
+                      <div><dt>中性粒细胞绝对值</dt><dd>0.8 ×10⁹/L <b>低</b></dd></div>
+                      <div><dt>血红蛋白</dt><dd>108 g/L <b>低</b></dd></div>
+                      <div><dt>血小板</dt><dd>92 ×10⁹/L <b>低</b></dd></div>
+                    </dl>
+                    {workflowStage === 1 && <button type="button" className="workflow-action" onClick={() => setWorkflowStage(2)}>运行演示解析</button>}
+                  </div>
+                )}
+
+                {workflowStage >= 2 && (
+                  <div className="analysis-result">
+                    <span>演示解析结果</span>
+                    <p><strong>已识别：</strong>3项血细胞指标较上一份合成报告下降。</p>
+                    <p><strong>仍缺少：</strong>当前生命体征、症状变化和床旁评估。</p>
+                    <p><strong>安全边界：</strong>不自动判断病因，不生成处方或剂量。</p>
+                    {workflowStage === 2 && <button type="button" className="workflow-action" onClick={() => setWorkflowStage(3)}>生成今日待办</button>}
+                    {workflowStage >= 3 && <div className="generated-note">已生成3项待确认任务，请医生逐项核实。</div>}
+                  </div>
+                )}
+              </section>
+            )}
+
             <section className="ai-summary">
               <div className="section-label"><span>AI</span><strong>今日管床摘要</strong><small>基于合成资料</small></div>
-              <div className="summary-block"><span>今日变化</span><p>{selectedPatient.change}</p></div>
-              <div className="summary-block"><span>建议先做</span><p>{selectedPatient.task}</p></div>
-              <button type="button" className="evidence-button">查看来源 · {selectedPatient.evidence}</button>
+              <div className="summary-block"><span>今日变化</span><p>{currentChange}</p></div>
+              <div className="summary-block"><span>建议先做</span><p>{currentTask}</p></div>
+              <button type="button" className="evidence-button">查看来源 · {currentEvidence}</button>
             </section>
             <section className="todo-section">
               <div className="section-label"><strong>今日待办</strong><small>由医生确认完成</small></div>
-              {taskTemplates.map((task, index) => { const key = `${selectedPatient.id}-${index}`; return <label className={doneTasks[key] ? "todo done" : "todo"} key={key}><input type="checkbox" checked={Boolean(doneTasks[key])} onChange={() => setDoneTasks((current) => ({ ...current, [key]: !current[key] }))} /><span>✓</span><p>{task}</p></label>; })}
+              {(!isWorkflowCase || workflowStage >= 3) ? taskTemplates.map((task, index) => { const key = `${selectedPatient.id}-${index}`; return <label className={doneTasks[key] ? "todo done" : "todo"} key={key}><input type="checkbox" checked={Boolean(doneTasks[key])} onChange={() => setDoneTasks((current) => ({ ...current, [key]: !current[key] }))} /><span>✓</span><p>{task}</p></label>; }) : <div className="todo-empty">完成演示解析后，系统才会生成待确认任务。</div>}
             </section>
-            <section className="review-box"><div><span>安全提醒</span><strong>{confirmed ? "已标记人工核实" : "关键结论尚未人工确认"}</strong><p>系统不自动修改诊断、开立医嘱或给出可直接执行的治疗方案。</p></div><button type="button" className={confirmed ? "confirmed" : ""} onClick={() => setConfirmed((value) => !value)}>{confirmed ? "已核实" : "标记核实"}</button></section>
+            <section className="review-box"><div><span>安全提醒</span><strong>{confirmed ? "已标记人工核实" : "关键结论尚未人工确认"}</strong><p>系统不自动修改诊断、开立医嘱或给出可直接执行的治疗方案。</p></div><button type="button" disabled={isWorkflowCase && workflowStage < 3} className={confirmed ? "confirmed" : ""} onClick={() => setConfirmed((value) => !value)}>{confirmed ? "已核实" : "标记核实"}</button></section>
           </aside>
         </div>
       </section>

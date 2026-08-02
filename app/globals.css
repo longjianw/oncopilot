@@ -88,6 +88,40 @@ td small { margin-top: 4px; color: var(--muted); font-size: 8px; }
 .patient-facts div + div { padding-left: 14px; border-left: 1px solid var(--line); }
 .patient-facts dt { color: var(--muted); font-size: 8px; }
 .patient-facts dd { margin: 4px 0 0; font-size: 10px; font-weight: 750; }
+.workflow-box { margin: 15px; padding: 15px; border: 1px solid #c8dae3; border-radius: 11px; background: #f8fbfc; }
+.workflow-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.workflow-heading span, .workflow-heading strong { display: block; }
+.workflow-heading span { color: var(--blue); font-size: 8px; font-weight: 850; }
+.workflow-heading strong { margin-top: 3px; font-size: 11px; }
+.workflow-heading small { color: var(--muted); font-size: 7px; text-align: right; }
+.workflow-steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin: 13px 0; }
+.workflow-steps span { position: relative; display: grid; justify-items: center; gap: 5px; color: #8b9aa2; font-size: 7px; text-align: center; }
+.workflow-steps span::before { content: ""; position: absolute; top: 10px; left: -50%; width: 100%; height: 1px; background: #d7e2e7; z-index: 0; }
+.workflow-steps span:first-child::before { display: none; }
+.workflow-steps i { width: 21px; height: 21px; display: grid; place-items: center; border: 1px solid #c6d5dc; border-radius: 50%; background: white; font-style: normal; font-size: 8px; font-weight: 850; z-index: 1; }
+.workflow-steps span.done { color: var(--green); font-weight: 800; }
+.workflow-steps span.done i { color: white; border-color: var(--green); background: var(--green); }
+.workflow-steps span.current { color: var(--blue); font-weight: 800; }
+.workflow-steps span.current i { color: var(--blue); border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-soft); }
+.workflow-empty { padding: 13px; border-radius: 9px; background: var(--blue-soft); text-align: center; }
+.workflow-empty p { margin: 0 0 10px; color: #486575; font-size: 8px; line-height: 1.55; }
+.workflow-empty button, .workflow-action { width: 100%; border: 0; border-radius: 8px; padding: 9px 10px; color: white; background: var(--blue); font-size: 8px; font-weight: 850; }
+.synthetic-report { margin-top: 10px; padding: 12px; border: 1px solid #d7e2e7; border-radius: 9px; background: white; }
+.synthetic-report > div > span, .synthetic-report > div > strong, .synthetic-report > div > small { display: block; }
+.synthetic-report > div > span { color: var(--blue); font-size: 7px; font-weight: 850; }
+.synthetic-report > div > strong { margin-top: 3px; font-size: 10px; }
+.synthetic-report > div > small { margin-top: 3px; color: var(--muted); font-size: 7px; }
+.synthetic-report dl { margin: 10px 0; border-top: 1px solid #e3ebee; }
+.synthetic-report dl div { display: flex; justify-content: space-between; gap: 8px; padding: 7px 0; border-bottom: 1px solid #e8eef1; font-size: 8px; }
+.synthetic-report dt { color: var(--muted); }
+.synthetic-report dd { margin: 0; font-weight: 750; }
+.synthetic-report dd b { margin-left: 4px; color: var(--red); }
+.analysis-result { margin-top: 9px; padding: 11px; border-radius: 9px; background: #eef7f2; border: 1px solid #cce3d8; }
+.analysis-result > span { color: var(--green); font-size: 8px; font-weight: 850; }
+.analysis-result p { margin: 7px 0 0; font-size: 8px; line-height: 1.5; }
+.analysis-result p strong { color: #365c4d; }
+.analysis-result .workflow-action { margin-top: 10px; background: var(--green); }
+.generated-note { margin-top: 9px; padding: 8px; border-radius: 7px; color: #2a6d54; background: white; font-size: 8px; font-weight: 750; }
 .ai-summary, .todo-section { margin: 15px; padding: 15px; border-radius: 11px; }
 .ai-summary { background: #edf7fa; border: 1px solid #cde5ef; }
 .section-label { display: flex; align-items: center; gap: 7px; margin-bottom: 11px; }
@@ -105,6 +139,7 @@ td small { margin-top: 4px; color: var(--muted); font-size: 8px; }
 .todo p { margin: 3px 0 0; font-size: 9px; line-height: 1.45; }
 .todo.done > span { color: white; border-color: var(--green); background: var(--green); }
 .todo.done p { color: #829097; text-decoration: line-through; }
+.todo-empty { padding: 12px; color: var(--muted); background: #f5f8f9; border-radius: 8px; font-size: 8px; text-align: center; }
 .review-box { margin: 0 15px 15px; padding: 13px; display: flex; align-items: center; gap: 10px; border-left: 3px solid var(--amber); background: #fff9ec; border-radius: 0 10px 10px 0; }
 .review-box > div { min-width: 0; }
 .review-box span, .review-box strong { display: block; }
@@ -112,6 +147,7 @@ td small { margin-top: 4px; color: var(--muted); font-size: 8px; }
 .review-box strong { margin-top: 3px; font-size: 10px; }
 .review-box p { margin: 4px 0 0; color: var(--muted); font-size: 8px; line-height: 1.45; }
 .review-box button { flex: 0 0 auto; border: 1px solid #dabd83; color: #835a15; background: white; border-radius: 8px; padding: 8px 9px; font-size: 8px; font-weight: 800; }
+.review-box button:disabled { cursor: not-allowed; opacity: .45; }
 .review-box button.confirmed { color: white; border-color: var(--green); background: var(--green); }
 
 @media (max-width: 1100px) {

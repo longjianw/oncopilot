@@ -22,6 +22,8 @@ test("renders the focused inpatient workbench", async () => {
   assert.match(html, /在区患者/);
   assert.match(html, /我的分管患者/);
   assert.match(html, /今日管床摘要/);
+  assert.match(html, /新增报告处理闭环/);
+  assert.match(html, /固定规则演示 · 尚未接入真实模型/);
   assert.match(html, /完全合成数据/);
   assert.doesNotMatch(html, /codex-preview/);
   assert.doesNotMatch(html, /react-loading-skeleton/);
