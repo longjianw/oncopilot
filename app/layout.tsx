@@ -2,11 +2,11 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "OncoPilot · 肿瘤住院安全工作台",
-  description: "一个使用完全合成数据演示病例追溯、管床任务、医嘱复核与医疗AI评测的安全工作台。",
+  title: "OncoPilot · 肿瘤住院管床助手",
+  description: "一个聚焦在区患者与分管患者的医疗 AI 作品原型，全部使用合成数据。",
   openGraph: {
-    title: "OncoPilot · 肿瘤住院安全工作台",
-    description: "从患者时间线到安全复核与评测闭环的医疗 AI 作品原型。",
+    title: "OncoPilot · 肿瘤住院管床助手",
+    description: "从在区患者到个人分管与今日待办的轻量医疗 AI 作品原型。",
     images: ["/og.png"],
   },
 };

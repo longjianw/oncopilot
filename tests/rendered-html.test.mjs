@@ -13,13 +13,16 @@ async function render() {
   );
 }
 
-test("renders the oncology safety workbench", async () => {
+test("renders the focused inpatient workbench", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   const html = await response.text();
   assert.match(html, /OncoPilot/);
-  assert.match(html, /肿瘤住院安全工作台/);
-  assert.match(html, /完全合成病例/);
+  assert.match(html, /肿瘤住院管床助手/);
+  assert.match(html, /在区患者/);
+  assert.match(html, /我的分管患者/);
+  assert.match(html, /今日管床摘要/);
+  assert.match(html, /完全合成数据/);
   assert.doesNotMatch(html, /codex-preview/);
   assert.doesNotMatch(html, /react-loading-skeleton/);
 });
