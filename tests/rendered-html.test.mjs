@@ -13,18 +13,18 @@ async function render() {
   );
 }
 
-test("renders the focused inpatient workbench", async () => {
+test("renders the simple medical-record workflow", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   const html = await response.text();
   assert.match(html, /OncoPilot/);
-  assert.match(html, /肿瘤住院管床助手/);
-  assert.match(html, /在区患者/);
-  assert.match(html, /我的分管患者/);
-  assert.match(html, /今日管床摘要/);
-  assert.match(html, /新增报告处理闭环/);
-  assert.match(html, /前台为固定规则演示 · 后台已完成真实模型初测/);
-  assert.match(html, /完全合成数据/);
+  assert.match(html, /肿瘤病例整理助手/);
+  assert.match(html, /把零散资料/);
+  assert.match(html, /可核实的现病史/);
+  assert.match(html, /粘贴患者资料/);
+  assert.match(html, /AI整理病史/);
+  assert.match(html, /DeepSeek V4 Flash · 已接入/);
+  assert.match(html, /仅使用合成或严格脱敏资料/);
   assert.doesNotMatch(html, /codex-preview/);
   assert.doesNotMatch(html, /react-loading-skeleton/);
 });

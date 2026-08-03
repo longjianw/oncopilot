@@ -5,6 +5,9 @@ import handler from "vinext/server/app-router-entry";
 interface Env {
   ASSETS: Fetcher;
   DB: D1Database;
+  ARK_CODING_API_KEY?: string;
+  ARK_CODING_MODEL?: string;
+  ARK_CODING_BASE_URL?: string;
   IMAGES: {
     input(stream: ReadableStream): {
       transform(options: Record<string, unknown>): {
@@ -27,6 +30,9 @@ interface ExecutionContext {
 
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    if (env.ARK_CODING_API_KEY) process.env.ARK_CODING_API_KEY = env.ARK_CODING_API_KEY;
+    if (env.ARK_CODING_MODEL) process.env.ARK_CODING_MODEL = env.ARK_CODING_MODEL;
+    if (env.ARK_CODING_BASE_URL) process.env.ARK_CODING_BASE_URL = env.ARK_CODING_BASE_URL;
     const url = new URL(request.url);
 
     if (url.pathname === "/_vinext/image") {
