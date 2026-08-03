@@ -31,6 +31,7 @@ export default function Home() {
   const [doneTasks, setDoneTasks] = useState<Record<string, boolean>>({});
   const [confirmed, setConfirmed] = useState(false);
   const [workflowStage, setWorkflowStage] = useState(0);
+  const [evaluationOpen, setEvaluationOpen] = useState(false);
 
   const visiblePatients = useMemo(() => {
     const source = mode === "mine" ? patients.filter((patient) => patient.mine) : patients;
@@ -61,7 +62,7 @@ export default function Home() {
     if (first) setSelectedId(first.id);
   };
 
-  const selectPatient = (id: string) => { setSelectedId(id); setConfirmed(false); };
+  const selectPatient = (id: string) => { setSelectedId(id); setConfirmed(false); setEvaluationOpen(false); };
 
   return (
     <main className="app-shell">
@@ -77,7 +78,7 @@ export default function Home() {
 
       <section className="workspace">
         <header className="topbar">
-          <div><span className="eyebrow">AI PORTFOLIO · V0.2</span><h1>{mode === "ward" ? "在区患者" : "我的分管患者"}</h1><p>{mode === "ward" ? "先看全病区，再进入需要关注的患者。" : "把我负责的患者、今日变化和待办放在同一个页面。"}</p></div>
+          <div><span className="eyebrow">AI PORTFOLIO · V0.3</span><h1>{mode === "ward" ? "在区患者" : "我的分管患者"}</h1><p>{mode === "ward" ? "先看全病区，再进入需要关注的患者。" : "把我负责的患者、今日变化和待办放在同一个页面。"}</p></div>
           <div className="scope-switch" aria-label="切换患者范围"><button type="button" className={mode === "ward" ? "active" : ""} onClick={() => switchMode("ward")}>在区 30</button><button type="button" className={mode === "mine" ? "active" : ""} onClick={() => switchMode("mine")}>我分管 3</button></div>
         </header>
 
@@ -161,6 +162,22 @@ export default function Home() {
               {(!isWorkflowCase || workflowStage >= 3) ? taskTemplates.map((task, index) => { const key = `${selectedPatient.id}-${index}`; return <label className={doneTasks[key] ? "todo done" : "todo"} key={key}><input type="checkbox" checked={Boolean(doneTasks[key])} onChange={() => setDoneTasks((current) => ({ ...current, [key]: !current[key] }))} /><span>✓</span><p>{task}</p></label>; }) : <div className="todo-empty">完成演示解析后，系统才会生成待确认任务。</div>}
             </section>
             <section className="review-box"><div><span>安全提醒</span><strong>{confirmed ? "已标记人工核实" : "关键结论尚未人工确认"}</strong><p>系统不自动修改诊断、开立医嘱或给出可直接执行的治疗方案。</p></div><button type="button" disabled={isWorkflowCase && workflowStage < 3} className={confirmed ? "confirmed" : ""} onClick={() => setConfirmed((value) => !value)}>{confirmed ? "已核实" : "标记核实"}</button></section>
+            {isWorkflowCase && confirmed && (
+              <section className="evaluation-proof">
+                <button type="button" className="evaluation-toggle" onClick={() => setEvaluationOpen((value) => !value)}><span><strong>评测证据</strong><small>查看这条流水线怎样被检验</small></span><b>{evaluationOpen ? "收起" : "展开"}</b></button>
+                {evaluationOpen && (
+                  <div className="evaluation-body">
+                    <div className="evaluation-disclaimer"><strong>不是模型成绩</strong><p>以下只验证评分器能奖励合规参考输出，并识别人工构造的失败样例。</p></div>
+                    <div className="evaluation-scores">
+                      <article><span>参考流水线自检</span><strong>100<small>/100</small></strong><p>来源、变化、缺失信息、任务和安全闸门均命中。</p></article>
+                      <article className="failure"><span>构造失败样例</span><strong>15<small>/100</small></strong><p>漏项、无来源、越权和执行状态混淆均被发现。</p></article>
+                    </div>
+                    <div className="error-tags"><span>无依据诊断</span><span>治疗越权</span><span>缺少来源</span><span>关键遗漏</span><span>状态混淆</span><span>缺少人工复核</span></div>
+                    <p className="evaluation-next">下一步：把真实模型原始输出放进同一评测器，才能形成可报告的模型对照结果。</p>
+                  </div>
+                )}
+              </section>
+            )}
           </aside>
         </div>
       </section>

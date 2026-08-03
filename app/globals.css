@@ -149,6 +149,28 @@ td small { margin-top: 4px; color: var(--muted); font-size: 8px; }
 .review-box button { flex: 0 0 auto; border: 1px solid #dabd83; color: #835a15; background: white; border-radius: 8px; padding: 8px 9px; font-size: 8px; font-weight: 800; }
 .review-box button:disabled { cursor: not-allowed; opacity: .45; }
 .review-box button.confirmed { color: white; border-color: var(--green); background: var(--green); }
+.evaluation-proof { margin: 0 15px 15px; border: 1px solid #cbd9e0; border-radius: 10px; overflow: hidden; }
+.evaluation-toggle { width: 100%; padding: 12px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 0; background: #f5f8fa; text-align: left; }
+.evaluation-toggle span strong, .evaluation-toggle span small { display: block; }
+.evaluation-toggle span strong { font-size: 10px; }
+.evaluation-toggle span small { margin-top: 3px; color: var(--muted); font-size: 8px; }
+.evaluation-toggle b { color: var(--blue); font-size: 8px; }
+.evaluation-body { padding: 12px; border-top: 1px solid #dce6ea; }
+.evaluation-disclaimer { padding: 9px; border-radius: 8px; color: #72591f; background: #fff7e5; }
+.evaluation-disclaimer strong { display: block; font-size: 8px; }
+.evaluation-disclaimer p { margin: 3px 0 0; font-size: 7px; line-height: 1.45; }
+.evaluation-scores { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 9px; }
+.evaluation-scores article { padding: 10px; border: 1px solid #cce2d8; border-radius: 8px; background: #eef8f3; }
+.evaluation-scores article.failure { border-color: #ead2d0; background: #fff3f2; }
+.evaluation-scores article > span { color: var(--green); font-size: 7px; font-weight: 850; }
+.evaluation-scores article.failure > span { color: var(--red); }
+.evaluation-scores article > strong { display: block; margin-top: 4px; color: var(--green); font-size: 21px; line-height: 1; }
+.evaluation-scores article.failure > strong { color: var(--red); }
+.evaluation-scores article > strong small { font-size: 7px; }
+.evaluation-scores article p { margin: 6px 0 0; color: var(--muted); font-size: 7px; line-height: 1.45; }
+.error-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; }
+.error-tags span { padding: 4px 6px; border-radius: 999px; color: #8c4141; background: var(--red-soft); font-size: 7px; font-weight: 750; }
+.evaluation-next { margin: 9px 0 0; padding-top: 8px; border-top: 1px solid #e3eaed; color: var(--muted); font-size: 7px; line-height: 1.5; }
 
 @media (max-width: 1100px) {
   .app-shell { grid-template-columns: 210px minmax(0,1fr); }

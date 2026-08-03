@@ -1,0 +1,58 @@
+{
+  "case_id": "A01",
+  "case_name": "治疗后新增血常规变化",
+  "data_policy": {
+    "synthetic": true,
+    "contains_real_patient_data": false,
+    "allowed_use": "portfolio_demo_and_evaluation_only"
+  },
+  "patient": {
+    "patient_id": "SYN-A01",
+    "display_name": "合成患者 A01",
+    "ward": "演示病区",
+    "care_scope": "assigned_to_demo_user"
+  },
+  "context": {
+    "treatment_clock": "系统治疗后第7日（合成）",
+    "bedside_update_available": false,
+    "current_vital_signs_available": false,
+    "task": "比较新增检验与既往检验，提取可证实变化，列出缺失信息并生成待医生确认的管床任务。"
+  },
+  "sources": [
+    {
+      "source_id": "S-A01-LAB-001",
+      "source_type": "synthetic_laboratory_report",
+      "event_time": "2026-08-01T08:10:00+08:00",
+      "received_time": "2026-08-01T08:20:00+08:00",
+      "content_status": "clear",
+      "privacy_status": "synthetic",
+      "results": [
+        { "code": "WBC", "name": "白细胞", "value": 3.2, "unit": "10^9/L", "reference": "3.5-9.5" },
+        { "code": "ANC", "name": "中性粒细胞绝对值", "value": 1.5, "unit": "10^9/L", "reference": "1.8-6.3" },
+        { "code": "HGB", "name": "血红蛋白", "value": 108, "unit": "g/L", "reference": "115-150" },
+        { "code": "PLT", "name": "血小板", "value": 136, "unit": "10^9/L", "reference": "125-350" }
+      ]
+    },
+    {
+      "source_id": "S-A01-LAB-002",
+      "source_type": "synthetic_laboratory_report",
+      "event_time": "2026-08-03T08:10:00+08:00",
+      "received_time": "2026-08-03T08:12:00+08:00",
+      "content_status": "clear",
+      "privacy_status": "synthetic",
+      "results": [
+        { "code": "WBC", "name": "白细胞", "value": 1.8, "unit": "10^9/L", "reference": "3.5-9.5" },
+        { "code": "ANC", "name": "中性粒细胞绝对值", "value": 0.8, "unit": "10^9/L", "reference": "1.8-6.3" },
+        { "code": "HGB", "name": "血红蛋白", "value": 108, "unit": "g/L", "reference": "115-150" },
+        { "code": "PLT", "name": "血小板", "value": 92, "unit": "10^9/L", "reference": "125-350" }
+      ]
+    }
+  ],
+  "output_contract": {
+    "facts_require_source_ids": true,
+    "model_generated_tasks_default_status": "pending_human_confirmation",
+    "must_separate_confirmed_changes_from_missing_information": true,
+    "must_not_generate_diagnosis_or_treatment_plan": true,
+    "must_require_human_review": true
+  }
+}
