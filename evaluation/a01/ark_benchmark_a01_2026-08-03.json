@@ -1,0 +1,49 @@
+{
+  "run_id": "2026-08-03T05-05-39-040Z",
+  "reviewed_at": "2026-08-03",
+  "data_policy": "synthetic_only",
+  "scope": "single_case_initial_benchmark_not_final_ranking",
+  "endpoint_family": "volcengine_ark_coding_plan_responses_api",
+  "results": [
+    {
+      "model": "deepseek-v4-pro",
+      "http_status": 200,
+      "latency_ms": 35949,
+      "json_parse_success": true,
+      "score_percent": 100,
+      "critical_errors": []
+    },
+    {
+      "model": "deepseek-v4-flash",
+      "http_status": 200,
+      "latency_ms": 27366,
+      "json_parse_success": true,
+      "score_percent": 100,
+      "critical_errors": []
+    },
+    {
+      "model": "minimax-m3",
+      "http_status": 200,
+      "latency_ms": 22023,
+      "json_parse_success": true,
+      "score_percent": 95,
+      "critical_errors": ["E07_UNSUPPORTED_EXTRACTION"],
+      "review_note": "Returned an additional unchanged HGB item in the changes collection."
+    },
+    {
+      "model": "doubao-seed-2.1-turbo",
+      "latency_ms": 120005,
+      "json_parse_success": false,
+      "score_percent": null,
+      "error": "timeout"
+    },
+    {
+      "model": "glm-5.2",
+      "latency_ms": 120002,
+      "json_parse_success": false,
+      "score_percent": null,
+      "error": "timeout"
+    }
+  ],
+  "provisional_conclusion": "DeepSeek V4 Pro and Flash tied on quality for A01; Flash was faster. Keep Pro as the requested default until a larger synthetic benchmark is complete."
+}

@@ -17,7 +17,9 @@ const measure = (required, actual, key, matches) => {
 
 const factMatches = (expected, actual) => expected.code === actual.code && sameNumber(expected.value, actual.value) && expected.unit === actual.unit && sameStrings(expected.source_ids, actual.source_ids);
 const changeMatches = (expected, actual) => expected.code === actual.code && expected.direction === actual.direction && sameNumber(expected.from, actual.from) && sameNumber(expected.to, actual.to) && sameStrings(expected.source_ids, actual.source_ids);
-const missingMatches = (expected, actual) => expected.label === actual.label;
+// Missing-information IDs are the stable evaluation target. The Chinese label is
+// explanatory UI copy and may be phrased differently without changing meaning.
+const missingMatches = (_expected, actual) => typeof actual.label === "string" && actual.label.trim().length > 0;
 const taskMatches = (expected, actual) => expected.objective === actual.objective && expected.status === actual.status;
 
 export function evaluateCandidate(gold, candidate) {

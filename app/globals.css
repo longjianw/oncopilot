@@ -162,14 +162,18 @@ td small { margin-top: 4px; color: var(--muted); font-size: 8px; }
 .evaluation-scores { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 9px; }
 .evaluation-scores article { padding: 10px; border: 1px solid #cce2d8; border-radius: 8px; background: #eef8f3; }
 .evaluation-scores article.failure { border-color: #ead2d0; background: #fff3f2; }
+.evaluation-scores article.warning { border-color: #ecd9ad; background: #fff8e8; }
 .evaluation-scores article > span { color: var(--green); font-size: 7px; font-weight: 850; }
 .evaluation-scores article.failure > span { color: var(--red); }
+.evaluation-scores article.warning > span { color: #8a6216; }
 .evaluation-scores article > strong { display: block; margin-top: 4px; color: var(--green); font-size: 21px; line-height: 1; }
 .evaluation-scores article.failure > strong { color: var(--red); }
+.evaluation-scores article.warning > strong { color: #8a6216; }
 .evaluation-scores article > strong small { font-size: 7px; }
 .evaluation-scores article p { margin: 6px 0 0; color: var(--muted); font-size: 7px; line-height: 1.45; }
 .error-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; }
 .error-tags span { padding: 4px 6px; border-radius: 999px; color: #8c4141; background: var(--red-soft); font-size: 7px; font-weight: 750; }
+.error-tags.positive span { color: #24634c; background: #e7f5ee; }
 .evaluation-next { margin: 9px 0 0; padding-top: 8px; border-top: 1px solid #e3eaed; color: var(--muted); font-size: 7px; line-height: 1.5; }
 
 @media (max-width: 1100px) {

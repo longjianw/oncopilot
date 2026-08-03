@@ -78,7 +78,7 @@ export default function Home() {
 
       <section className="workspace">
         <header className="topbar">
-          <div><span className="eyebrow">AI PORTFOLIO · V0.3</span><h1>{mode === "ward" ? "在区患者" : "我的分管患者"}</h1><p>{mode === "ward" ? "先看全病区，再进入需要关注的患者。" : "把我负责的患者、今日变化和待办放在同一个页面。"}</p></div>
+          <div><span className="eyebrow">AI PORTFOLIO · V0.4</span><h1>{mode === "ward" ? "在区患者" : "我的分管患者"}</h1><p>{mode === "ward" ? "先看全病区，再进入需要关注的患者。" : "把我负责的患者、今日变化和待办放在同一个页面。"}</p></div>
           <div className="scope-switch" aria-label="切换患者范围"><button type="button" className={mode === "ward" ? "active" : ""} onClick={() => switchMode("ward")}>在区 30</button><button type="button" className={mode === "mine" ? "active" : ""} onClick={() => switchMode("mine")}>我分管 3</button></div>
         </header>
 
@@ -113,7 +113,7 @@ export default function Home() {
 
             {isWorkflowCase && (
               <section className="workflow-box">
-                <div className="workflow-heading"><div><span>可交互演示</span><strong>新增报告处理闭环</strong></div><small>固定规则演示 · 尚未接入真实模型</small></div>
+                <div className="workflow-heading"><div><span>可交互演示</span><strong>新增报告处理闭环</strong></div><small>前台为固定规则演示 · 后台已完成真实模型初测</small></div>
                 <div className="workflow-steps" aria-label="处理进度">
                   {["新增报告", "AI识别", "生成待办", "医生核实"].map((label, index) => {
                     const step = index + 1;
@@ -167,13 +167,15 @@ export default function Home() {
                 <button type="button" className="evaluation-toggle" onClick={() => setEvaluationOpen((value) => !value)}><span><strong>评测证据</strong><small>查看这条流水线怎样被检验</small></span><b>{evaluationOpen ? "收起" : "展开"}</b></button>
                 {evaluationOpen && (
                   <div className="evaluation-body">
-                    <div className="evaluation-disclaimer"><strong>不是模型成绩</strong><p>以下只验证评分器能奖励合规参考输出，并识别人工构造的失败样例。</p></div>
+                    <div className="evaluation-disclaimer"><strong>A01 单病例初测，不代表最终排名</strong><p>2026-08-03 使用完全合成输入、同一提示词和同一评分器；原始输出已保存并人工核对。</p></div>
                     <div className="evaluation-scores">
-                      <article><span>参考流水线自检</span><strong>100<small>/100</small></strong><p>来源、变化、缺失信息、任务和安全闸门均命中。</p></article>
-                      <article className="failure"><span>构造失败样例</span><strong>0<small>/100</small></strong><p>严格核对数值与来源后，所有关键维度均未通过。</p></article>
+                      <article><span>DeepSeek V4 Pro</span><strong>100<small>/100</small></strong><p>35.9秒 · 全部关键项命中</p></article>
+                      <article><span>DeepSeek V4 Flash</span><strong>100<small>/100</small></strong><p>27.4秒 · 同分且更快</p></article>
+                      <article className="warning"><span>MiniMax M3</span><strong>95<small>/100</small></strong><p>22.0秒 · 多报1项“无变化”</p></article>
+                      <article className="failure"><span>豆包 / GLM</span><strong>超时</strong><p>均超过120秒，未获得可评分输出</p></article>
                     </div>
-                    <div className="error-tags"><span>无依据诊断</span><span>治疗越权</span><span>缺少来源</span><span>关键遗漏</span><span>状态混淆</span><span>缺少人工复核</span><span>无依据抽取</span></div>
-                    <p className="evaluation-next">下一步：把真实模型原始输出放进同一评测器，才能形成可报告的模型对照结果。</p>
+                    <div className="error-tags positive"><span>无自动诊断</span><span>无具体治疗越权</span><span>来源完整</span><span>保留人工复核</span></div>
+                    <p className="evaluation-next">阶段结论：Pro 与 Flash 质量并列，Flash 更快；当前仍保留 Pro 为默认模型，待扩展到约30例合成病例后再确定最终方案。</p>
                   </div>
                 )}
               </section>
