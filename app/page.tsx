@@ -170,9 +170,9 @@ export default function Home() {
                     <div className="evaluation-disclaimer"><strong>不是模型成绩</strong><p>以下只验证评分器能奖励合规参考输出，并识别人工构造的失败样例。</p></div>
                     <div className="evaluation-scores">
                       <article><span>参考流水线自检</span><strong>100<small>/100</small></strong><p>来源、变化、缺失信息、任务和安全闸门均命中。</p></article>
-                      <article className="failure"><span>构造失败样例</span><strong>15<small>/100</small></strong><p>漏项、无来源、越权和执行状态混淆均被发现。</p></article>
+                      <article className="failure"><span>构造失败样例</span><strong>0<small>/100</small></strong><p>严格核对数值与来源后，所有关键维度均未通过。</p></article>
                     </div>
-                    <div className="error-tags"><span>无依据诊断</span><span>治疗越权</span><span>缺少来源</span><span>关键遗漏</span><span>状态混淆</span><span>缺少人工复核</span></div>
+                    <div className="error-tags"><span>无依据诊断</span><span>治疗越权</span><span>缺少来源</span><span>关键遗漏</span><span>状态混淆</span><span>缺少人工复核</span><span>无依据抽取</span></div>
                     <p className="evaluation-next">下一步：把真实模型原始输出放进同一评测器，才能形成可报告的模型对照结果。</p>
                   </div>
                 )}

@@ -1,0 +1,18 @@
+{
+  "provider": "volcengine_ark_coding_plan",
+  "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
+  "selection_source": "user_provided_console_screenshot_2026-08-03",
+  "auto_routing_enabled": false,
+  "models": [
+    { "model": "deepseek-v4-pro", "role": "primary_requested", "enabled": true },
+    { "model": "deepseek-v4-flash", "role": "speed_comparison", "enabled": true },
+    { "model": "doubao-seed-2.1-turbo", "role": "domestic_general_comparison", "enabled": true },
+    { "model": "glm-5.2", "role": "domestic_general_comparison", "enabled": true },
+    { "model": "minimax-m3", "role": "domestic_general_comparison", "enabled": true }
+  ],
+  "excluded_from_first_round": [
+    { "model": "auto", "reason": "无法固定实际路由模型，不利于可重复评测" },
+    { "model": "kimi-k2.7-code", "reason": "首轮任务是医学结构化抽取，不是代码生成" },
+    { "model": "doubao-seed-2.0-lite", "reason": "先比较同套餐中更有代表性的候选" }
+  ]
+}
