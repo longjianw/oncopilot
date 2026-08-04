@@ -2,11 +2,11 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "OncoPilot · 肿瘤病例整理助手",
-  description: "粘贴合成资料，使用AI生成可核实的现病史、质控提醒与资料来源，再衔接简洁管床卡。",
+  title: "OncoPilot · 肿瘤病史整理助手",
+  description: "粘贴患者资料，生成可核实的现病史初稿，并提示还需要向患者补问什么。",
   openGraph: {
-    title: "OncoPilot · 肿瘤病例整理助手",
-    description: "一条简单的医疗AI主线：资料整理、医生确认、管床衔接。",
+    title: "OncoPilot · 肿瘤病史整理助手",
+    description: "一条简单的医疗AI主线：整理现病史，并提醒还要问什么。",
     images: ["/og.png"],
   },
 };

@@ -5,15 +5,12 @@ type ArkResponse = {
 
 type AnalysisResult = {
   present_illness: string;
+  follow_up_questions: Array<{
+    question: string;
+    reason: string;
+    priority: "high" | "medium";
+  }>;
   sources: Array<{ source_id: string; title: string; evidence: string }>;
-  quality_checks: Array<{ level: "missing" | "verify" | "passed"; text: string }>;
-  patient_card: {
-    label: string;
-    diagnosis: string;
-    age_band: string;
-    risk_label: string;
-    today_focus: string;
-  };
 };
 
 const extractText = (response: ArkResponse) => {
@@ -44,22 +41,20 @@ const isValidResult = (value: unknown): value is AnalysisResult => {
     && Array.isArray(result.sources)
     && result.sources.length > 0
     && result.sources.every((item) => item && typeof item.source_id === "string" && typeof item.title === "string" && typeof item.evidence === "string")
-    && Array.isArray(result.quality_checks)
-    && result.quality_checks.length > 0
-    && result.quality_checks.every((item) => item && ["missing", "verify", "passed"].includes(item.level) && typeof item.text === "string")
-    && Boolean(result.patient_card)
-    && typeof result.patient_card?.label === "string"
-    && typeof result.patient_card?.diagnosis === "string"
-    && typeof result.patient_card?.age_band === "string"
-    && typeof result.patient_card?.risk_label === "string"
-    && typeof result.patient_card?.today_focus === "string";
+    && Array.isArray(result.follow_up_questions)
+    && result.follow_up_questions.length >= 2
+    && result.follow_up_questions.length <= 8
+    && result.follow_up_questions.every((item) => item
+      && typeof item.question === "string"
+      && typeof item.reason === "string"
+      && ["high", "medium"].includes(item.priority));
 };
 
 export async function POST(request: Request) {
   try {
     const body = await request.json() as { source_text?: unknown };
     const sourceText = typeof body.source_text === "string" ? body.source_text.trim() : "";
-    if (sourceText.length < 20) return Response.json({ error: "请先粘贴完整的合成病例资料。" }, { status: 400 });
+    if (sourceText.length < 20) return Response.json({ error: "请先粘贴需要整理的患者资料。" }, { status: 400 });
     if (sourceText.length > 12000) return Response.json({ error: "演示版一次最多处理12000字。" }, { status: 400 });
     if (/(?:^|\D)\d{17}[\dXx](?:\D|$)/.test(sourceText) || /(?:^|\D)1[3-9]\d{9}(?:\D|$)/.test(sourceText)) {
       return Response.json({ error: "检测到疑似身份证号或手机号，请脱敏后再提交。" }, { status: 400 });
@@ -71,17 +66,17 @@ export async function POST(request: Request) {
     const baseUrl = (process.env.ARK_CODING_BASE_URL || "https://ark.cn-beijing.volces.com/api/coding/v3").replace(/\/$/, "");
 
     const prompt = [
-      "你是医疗AI作品中的病例资料整理器。输入只允许是完全合成或严格脱敏资料。",
-      "任务是整理资料，不作最终诊断，不提供具体处方、剂量或可直接执行的治疗决定，不补写输入中没有的事实。",
+      "你是医疗AI作品中的病史整理器，服务于第一次接管该患者的肿瘤科住院医师或规培医师。患者可以是实体瘤、淋巴瘤或白血病，也可能已在外院确诊、手术、放疗或接受其他治疗。",
+      "任务只有两个：整理现病史；列出还需要向患者补问或核对的关键问题。不作最终诊断，不提供检查医嘱、穿刺决定、处方、剂量或治疗方案。",
+      "现病史只能写输入中已经明确的事实。输入没有明确问过的发热、寒战、恶心、呕吐、腹痛等阴性症状，不得直接写成无；应根据本次就诊目的和已有疾病，把最重要的内容放入follow_up_questions，提醒医生问过后再补写。",
       "只输出一个JSON对象，不要Markdown代码块，不要解释。",
       "输出结构必须严格为：",
       JSON.stringify({
-        present_illness: "一段中文现病史初稿，按时间顺序整合，缺失内容不得猜测",
+        present_illness: "一段简洁中文现病史初稿，按时间顺序整合已有事实",
+        follow_up_questions: [{ question: "需要直接询问患者的一句话", reason: "为什么这次需要问", priority: "high或medium" }],
         sources: [{ source_id: "S1", title: "资料名称", evidence: "该资料支持的关键事实" }],
-        quality_checks: [{ level: "missing或verify或passed", text: "简明质控提醒" }],
-        patient_card: { label: "合成患者 A01", diagnosis: "资料中已有诊断或待核实", age_band: "年龄段或待核实", risk_label: "待核实", today_focus: "仅描述下一步需核实的信息，不给治疗方案" },
       }),
-      "现病史不得出现姓名、身份证号、手机号、住院号。sources只列输入中明确出现的来源编号。quality_checks输出2至5条。",
+      "follow_up_questions输出2至8条，按重要程度排序，使用医生可以直接问患者的简短语言；不要罗列与本病例无关的全套系统回顾。现病史不得出现姓名、身份证号、手机号、住院号。sources只列输入中明确出现的来源编号。",
       `唯一输入：\n${sourceText}`,
     ].join("\n\n");
 
