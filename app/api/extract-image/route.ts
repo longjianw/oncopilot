@@ -1,5 +1,16 @@
 type VisionResponse = {
   choices?: Array<{ message?: { content?: string } }>;
+  output_text?: string;
+  output?: Array<{ content?: Array<{ type?: string; text?: string }> }>;
+};
+
+const responseText = (data: VisionResponse) => {
+  if (data.output_text?.trim()) return data.output_text.trim();
+  const parts = data.output?.flatMap((item) => item.content || [])
+    .filter((item) => item.type === "output_text" && item.text)
+    .map((item) => item.text!.trim())
+    .filter(Boolean);
+  return parts?.join("\n").trim() || data.choices?.[0]?.message?.content?.trim();
 };
 
 const toBase64 = (bytes: Uint8Array) => {
@@ -19,11 +30,13 @@ export async function POST(request: Request) {
     if (!image.type.startsWith("image/")) return Response.json({ error: "只支持图片文件。" }, { status: 400 });
     if (image.size > 8_000_000) return Response.json({ error: "单张图片请控制在 8MB 以内。" }, { status: 400 });
 
-    const apiKey = process.env.ARK_VISION_API_KEY;
-    if (!apiKey) return Response.json({ error: "图片识别服务尚未配置。请先配置视觉模型密钥。" }, { status: 503 });
+    // 图片可复用 Coding Plan 的服务端密钥；视觉变量仅用于有独立服务时覆盖。
+    const apiKey = process.env.ARK_VISION_API_KEY || process.env.ARK_CODING_API_KEY;
+    if (!apiKey) return Response.json({ error: "图片识别服务尚未配置。请先配置服务端密钥。" }, { status: 503 });
 
-    const model = process.env.ARK_VISION_MODEL || "doubao-1.5-vision-pro-32k";
-    const baseUrl = (process.env.ARK_VISION_BASE_URL || "https://ark.cn-beijing.volces.com/api/v3").replace(/\/$/, "");
+    const hasSeparateVisionService = Boolean(process.env.ARK_VISION_BASE_URL);
+    const model = process.env.ARK_VISION_MODEL || "doubao-seed-2.0-code";
+    const baseUrl = (process.env.ARK_VISION_BASE_URL || process.env.ARK_CODING_BASE_URL || "https://ark.cn-beijing.volces.com/api/coding/v3").replace(/\/$/, "");
     const bytes = new Uint8Array(await image.arrayBuffer());
     const dataUrl = `data:${image.type};base64,${toBase64(bytes)}`;
     const prompt = [
@@ -32,23 +45,33 @@ export async function POST(request: Request) {
       "输出纯文本，尽量保留报告原有层级。图片可能来自完全合成或严格脱敏资料。",
     ].join("\n");
 
-    const upstream = await fetch(`${baseUrl}/chat/completions`, {
+    const requestBody = hasSeparateVisionService
+      ? {
+          model,
+          temperature: 0,
+          messages: [{ role: "user", content: [
+            { type: "text", text: prompt },
+            { type: "image_url", image_url: { url: dataUrl } },
+          ] }],
+        }
+      : {
+          model,
+          input: [{ role: "user", content: [
+            { type: "input_text", text: prompt },
+            { type: "input_image", image_url: dataUrl },
+          ] }],
+        };
+
+    const upstream = await fetch(`${baseUrl}/${hasSeparateVisionService ? "chat/completions" : "responses"}`, {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model,
-        temperature: 0,
-        messages: [{ role: "user", content: [
-          { type: "text", text: prompt },
-          { type: "image_url", image_url: { url: dataUrl } },
-        ] }],
-      }),
+      body: JSON.stringify(requestBody),
       signal: AbortSignal.timeout(75000),
     });
 
     if (!upstream.ok) throw new Error(`视觉模型请求失败：${upstream.status}`);
     const data = await upstream.json() as VisionResponse;
-    const extractedText = data.choices?.[0]?.message?.content?.trim();
+    const extractedText = responseText(data);
     if (!extractedText) throw new Error("视觉模型没有返回可用文字");
 
     return Response.json({ extracted_text: extractedText }, { headers: { "Cache-Control": "no-store" } });

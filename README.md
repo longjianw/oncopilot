@@ -24,7 +24,7 @@ npm install
 npm run dev
 ```
 
-真实模型调用需在服务端配置 `.env.example` 中列出的火山方舟环境变量；其中图片识别需要单独配置视觉模型的 `ARK_VISION_API_KEY`。密钥不得提交到仓库或发送到客户端。
+真实模型调用需在服务端配置 `.env.example` 中列出的火山方舟环境变量。图片识别默认复用 Coding Plan 的 `ARK_CODING_API_KEY`，但调用独立的视觉模型；`ARK_VISION_*` 仅用于覆盖为另一套视觉服务。密钥不得提交到仓库或发送到客户端。
 
 检查构建与测试：
 
