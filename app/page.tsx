@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, useState } from "react";
+import { ChangeEvent, useEffect, useState } from "react";
 
 type Stage = "input" | "result";
 type QuestionPriority = "high" | "medium";
@@ -30,8 +30,15 @@ export default function Home() {
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(false);
+  const [imageLoading, setImageLoading] = useState(false);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [imageName, setImageName] = useState("");
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => () => {
+    if (imagePreview) URL.revokeObjectURL(imagePreview);
+  }, [imagePreview]);
 
   const analyze = async () => {
     if (sourceText.trim().length < 20 || loading) return;
@@ -66,12 +73,53 @@ export default function Home() {
     setError("");
   };
 
+  const chooseImage = async (event: ChangeEvent<HTMLInputElement>) => {
+    const image = event.target.files?.[0];
+    event.target.value = "";
+    if (!image) return;
+    if (!image.type.startsWith("image/")) {
+      setError("请选择图片文件。");
+      return;
+    }
+    if (image.size > 8_000_000) {
+      setError("单张图片请控制在 8MB 以内；拍报告时尽量只拍一页。");
+      return;
+    }
+
+    if (imagePreview) URL.revokeObjectURL(imagePreview);
+    setImagePreview(URL.createObjectURL(image));
+    setImageName(image.name || "拍摄的图片");
+    setImageLoading(true);
+    setError("");
+
+    try {
+      const formData = new FormData();
+      formData.append("image", image);
+      const response = await fetch("/api/extract-image", { method: "POST", body: formData });
+      const payload = await response.json() as { extracted_text?: string; error?: string };
+      if (!response.ok || !payload.extracted_text) throw new Error(payload.error || "图片暂时没有识别出来。");
+      const heading = `【图片资料｜AI识别，待核对】\n${payload.extracted_text.trim()}`;
+      setSourceText((current) => current.trim() ? `${current.trim()}\n\n${heading}` : heading);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "图片暂时没有识别出来。");
+    } finally {
+      setImageLoading(false);
+    }
+  };
+
+  const clearImage = () => {
+    if (imagePreview) URL.revokeObjectURL(imagePreview);
+    setImagePreview(null);
+    setImageName("");
+  };
+
   const reset = () => {
     setStage("input");
     setSourceText("");
     setAnalysis(null);
     setDraft("");
     setCopied(false);
+    clearImage();
     setError("");
   };
 
@@ -107,13 +155,27 @@ export default function Home() {
 
           <div className="input-card">
             <div className="card-heading">
-              <div><span>把你现在掌握的都放进来</span><h2>粘贴病历、外院检查和患者口述</h2></div>
+              <div><span>把你现在掌握的都放进来</span><h2>拍照、上传图片，或粘贴文字</h2></div>
               <button type="button" onClick={() => { setSourceText(syntheticSample); setError(""); }}>先看一个假病例</button>
             </div>
+            <div className="image-actions" aria-label="图片资料输入">
+              <label className="image-action camera-action">拍照<input type="file" accept="image/*" capture="environment" onChange={chooseImage} /></label>
+              <label className="image-action">上传图片<input type="file" accept="image/jpeg,image/png,image/webp" onChange={chooseImage} /></label>
+              <span>支持单页报告、病理或检查单照片</span>
+            </div>
+            {imagePreview && (
+              <div className="image-preview">
+                {/* Local object URL preview; image optimization is not applicable. */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={imagePreview} alt="待识别的资料预览" />
+                <span><strong>{imageLoading ? "正在识别图片…" : "图片已识别并填入下方"}</strong><small>{imageName} · 请核对识别文字</small></span>
+                <button type="button" onClick={clearImage} aria-label="移除图片预览">×</button>
+              </div>
+            )}
             <textarea
               value={sourceText}
               onChange={(event) => { setSourceText(event.target.value); setError(""); }}
-              placeholder="例如：患者为什么来、外院做过什么、病理和影像结果、既往治疗、现在有什么不舒服……"
+              placeholder="图片识别的文字会自动放到这里。也可以补充：患者为什么来、外院做过什么、既往治疗、现在有什么不舒服……"
               aria-label="患者资料"
               maxLength={12000}
             />
@@ -122,10 +184,10 @@ export default function Home() {
               <span>{sourceText.length}/12000</span>
             </div>
             {error && <p className="error-message" role="alert">{error}</p>}
-            <button type="button" className="primary-action" disabled={sourceText.trim().length < 20 || loading} onClick={analyze}>
+            <button type="button" className="primary-action" disabled={sourceText.trim().length < 20 || loading || imageLoading} onClick={analyze}>
               {loading ? <><i className="spinner" />正在整理</> : <>生成现病史，并告诉我还要问什么 <b>→</b></>}
             </button>
-            <p className="privacy-copy">演示版请勿粘贴姓名、住院号、电话、身份证号或可识别的真实患者资料。</p>
+            <p className="privacy-copy">演示版请勿上传含姓名、住院号、二维码、电话、身份证号或可识别信息的真实患者图片。</p>
           </div>
 
           <div className="output-promise two-items" aria-label="系统输出">

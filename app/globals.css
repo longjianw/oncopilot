@@ -54,6 +54,17 @@ button { cursor: pointer; }
 .card-heading span { color: var(--blue); font-size: 10px; font-weight: 850; }
 .card-heading h2 { margin: 4px 0 0; font-size: 20px; }
 .card-heading button { padding: 8px 12px; border: 1px solid #c9e0e9; border-radius: 9px; color: var(--blue-dark); background: var(--blue-soft); font-size: 10px; font-weight: 800; }
+.image-actions { margin-top: 18px; padding: 12px; display: flex; align-items: center; gap: 9px; border: 1px dashed #bdd5df; border-radius: 11px; background: #f8fcfd; }
+.image-action { padding: 8px 12px; border: 1px solid #c9e0e9; border-radius: 8px; color: var(--blue-dark); background: white; font-size: 10px; font-weight: 800; cursor: pointer; }
+.image-action.camera-action { color: white; border-color: var(--blue); background: var(--blue); }
+.image-action input { display: none; }
+.image-actions > span { color: var(--muted); font-size: 9px; }
+.image-preview { margin-top: 12px; padding: 10px; display: grid; grid-template-columns: 64px 1fr 28px; gap: 11px; align-items: center; border: 1px solid #cde4db; border-radius: 10px; background: var(--green-soft); }
+.image-preview img { width: 64px; height: 50px; object-fit: cover; border-radius: 6px; background: white; }
+.image-preview strong, .image-preview small { display: block; }
+.image-preview strong { color: #28684f; font-size: 10px; }
+.image-preview small { margin-top: 3px; color: #5b7c6f; font-size: 9px; }
+.image-preview button { width: 27px; height: 27px; border: 0; border-radius: 50%; color: #4b6f61; background: rgba(255,255,255,.7); font-size: 17px; line-height: 1; }
 .input-card textarea { width: 100%; min-height: 255px; margin-top: 18px; padding: 16px; resize: vertical; outline: none; border: 1px solid #cbdde4; border-radius: 12px; background: #fbfdfe; font-size: 12px; line-height: 1.75; transition: border-color .18s, box-shadow .18s; }
 .input-card textarea:focus { border-color: var(--blue); box-shadow: 0 0 0 4px rgba(20,122,167,.1); }
 .input-footer { margin-top: 9px; display: flex; justify-content: space-between; color: #85969f; font-size: 9px; }
@@ -126,6 +137,8 @@ button { cursor: pointer; }
   .hero-copy p { font-size: 12px; }
   .input-card { padding: 17px; }
   .input-card textarea { min-height: 230px; }
+  .image-actions { align-items: flex-start; flex-wrap: wrap; }
+  .image-actions > span { width: 100%; }
   .output-promise, .output-promise.two-items { grid-template-columns: 1fr; }
   .output-promise { max-width: 100%; }
   .result-title { align-items: flex-start; }

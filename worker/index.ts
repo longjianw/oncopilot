@@ -8,6 +8,9 @@ interface Env {
   ARK_CODING_API_KEY?: string;
   ARK_CODING_MODEL?: string;
   ARK_CODING_BASE_URL?: string;
+  ARK_VISION_API_KEY?: string;
+  ARK_VISION_MODEL?: string;
+  ARK_VISION_BASE_URL?: string;
   IMAGES: {
     input(stream: ReadableStream): {
       transform(options: Record<string, unknown>): {
@@ -33,6 +36,9 @@ const worker = {
     if (env.ARK_CODING_API_KEY) process.env.ARK_CODING_API_KEY = env.ARK_CODING_API_KEY;
     if (env.ARK_CODING_MODEL) process.env.ARK_CODING_MODEL = env.ARK_CODING_MODEL;
     if (env.ARK_CODING_BASE_URL) process.env.ARK_CODING_BASE_URL = env.ARK_CODING_BASE_URL;
+    if (env.ARK_VISION_API_KEY) process.env.ARK_VISION_API_KEY = env.ARK_VISION_API_KEY;
+    if (env.ARK_VISION_MODEL) process.env.ARK_VISION_MODEL = env.ARK_VISION_MODEL;
+    if (env.ARK_VISION_BASE_URL) process.env.ARK_VISION_BASE_URL = env.ARK_VISION_BASE_URL;
     const url = new URL(request.url);
 
     if (url.pathname === "/_vinext/image") {
