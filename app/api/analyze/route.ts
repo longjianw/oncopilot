@@ -53,7 +53,7 @@ export async function POST(request: Request) {
     const body = await request.json() as { source_text?: unknown };
     const sourceText = typeof body.source_text === "string" ? body.source_text.trim() : "";
     if (sourceText.length < 20) return Response.json({ error: "请先粘贴需要整理的患者资料。" }, { status: 400 });
-    if (sourceText.length > 12000) return Response.json({ error: "演示版一次最多处理12000字。" }, { status: 400 });
+    if (sourceText.length > 32000) return Response.json({ error: "一次资料过长（超过32000字），请保留与本次病历最相关的页面后重试。" }, { status: 400 });
     if (/(?:^|\D)\d{17}[\dXx](?:\D|$)/.test(sourceText) || /(?:^|\D)1[3-9]\d{9}(?:\D|$)/.test(sourceText)) {
       return Response.json({ error: "检测到疑似身份证号或手机号，请脱敏后再提交。" }, { status: 400 });
     }

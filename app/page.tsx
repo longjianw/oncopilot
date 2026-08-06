@@ -8,10 +8,12 @@ type AnalysisResult = { chief_complaint: string; present_illness: string; pendin
 type UploadItem = { id: string; name: string; preview?: string; status: UploadStatus; error?: string };
 type PreparedInput = { name: string; file: File; preview?: string };
 
-const MAX_ITEMS = 6;
-const MAX_PDF_PAGES = 5;
-const MAX_UPLOAD_BYTES = 1_800_000;
-const MAX_EDGE = 2200;
+const MAX_ITEMS = 20;
+const MAX_PDF_PAGES = 20;
+const MAX_UPLOAD_BYTES = 900_000;
+const MAX_EDGE = 1800;
+const MAX_SOURCE_CHARS = 32_000;
+const RECOGNITION_CONCURRENCY = 3;
 
 const syntheticSample = `【S1 外院病理与治疗摘要｜完全合成】
 患者，女，50-59岁。2026-06因反复颈部淋巴结肿大于外院就诊；外院淋巴结活检提示淋巴系统恶性肿瘤，病理分型及免疫组化报告原文未随带。2026-06下旬及07中旬于外院完成2周期抗肿瘤治疗，具体方案及末次治疗日期未提供。治疗后颈部肿大较前缩小，期间未诉发热、寒战、出血及明显恶心、呕吐。
@@ -52,7 +54,7 @@ const compressImage = async (input: File, displayName: string) => {
   if (!context) throw new Error("图片预处理失败");
   context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
   bitmap.close();
-  for (const quality of [0.86, 0.74, 0.62, 0.5]) {
+  for (const quality of [0.82, 0.7, 0.58, 0.45]) {
     const file = await canvasToFile(canvas, displayName.replace(/\.[^.]+$/, "") + ".jpg", quality);
     if (file.size <= MAX_UPLOAD_BYTES) return file;
   }
@@ -106,7 +108,7 @@ export default function Home() {
     } catch (caught) { setError(caught instanceof Error ? caught.message : "AI整理失败，请稍后重试。"); } finally { setLoading(false); }
   };
 
-  const recognize = async (input: PreparedInput) => {
+  const recognize = async (input: PreparedInput): Promise<string | null> => {
     const id = crypto.randomUUID();
     setUploads((items) => [...items, { id, name: input.name, preview: input.preview, status: "recognizing" }]);
     try {
@@ -115,14 +117,15 @@ export default function Home() {
       const payload = await readPayload(response);
       if (!response.ok || !payload.extracted_text) throw new Error(payload.error || "图片暂时没有识别出来。");
       const heading = `【${input.name}｜AI识别，待核对】\n${payload.extracted_text.trim()}`;
-      setSourceText((current) => current.trim() ? `${current.trim()}\n\n${heading}` : heading);
       updateUpload(id, { status: "done" });
-    } catch (caught) { updateUpload(id, { status: "error", error: caught instanceof Error ? caught.message : "图片识别失败" }); }
+      return heading;
+    } catch (caught) { updateUpload(id, { status: "error", error: caught instanceof Error ? caught.message : "图片识别失败" }); return null; }
   };
 
   const chooseDocuments = async (event: ChangeEvent<HTMLInputElement>) => {
     const selected = Array.from(event.target.files || []); event.target.value = "";
     if (!selected.length) return;
+    if (busy) { setError("正在识别上一批资料，请完成后再继续添加。"); return; }
     setError("");
     try {
       const prepared: PreparedInput[] = [];
@@ -137,7 +140,11 @@ export default function Home() {
         prepared.forEach((item) => item.preview && URL.revokeObjectURL(item.preview));
         throw new Error(`一次最多识别 ${MAX_ITEMS} 张图或 PDF 页面，请分批上传。`);
       }
-      for (const item of prepared) await recognize(item);
+      for (let offset = 0; offset < prepared.length; offset += RECOGNITION_CONCURRENCY) {
+        const batch = prepared.slice(offset, offset + RECOGNITION_CONCURRENCY);
+        const headings = (await Promise.all(batch.map(recognize))).filter((heading): heading is string => Boolean(heading));
+        if (headings.length) setSourceText((current) => current.trim() ? `${current.trim()}\n\n${headings.join("\n\n")}` : headings.join("\n\n"));
+      }
     } catch (caught) { setError(caught instanceof Error ? caught.message : "文件处理失败，请重试。"); }
   };
 
@@ -159,10 +166,10 @@ export default function Home() {
       <div className="input-card">
         <div className="card-heading"><div><span>把你现在掌握的都放进来</span><h2>拍照、上传文件，或粘贴文字</h2></div><button type="button" onClick={() => { setSourceText(syntheticSample); setError(""); }}>先看一个假病例</button></div>
         <p className="reference-status"><b>已启用本地规则</b> 益阳市中心医院肿瘤内科入院记录结构 · 仅约束病史结构，不替代上级审核</p>
-        <div className="image-actions" aria-label="资料文件输入"><label className="image-action camera-action">拍照<input type="file" accept="image/*" capture="environment" multiple onChange={chooseDocuments} /></label><label className="image-action">上传图片或 PDF<input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif,application/pdf,.pdf" multiple onChange={chooseDocuments} /></label><span>最多 {MAX_ITEMS} 张图或 PDF 页面；PDF 最多 {MAX_PDF_PAGES} 页，HEIC 会先在本机转为 JPEG</span></div>
+        <div className="image-actions" aria-label="资料文件输入"><label className="image-action camera-action">拍照<input type="file" accept="image/*" capture="environment" multiple onChange={chooseDocuments} /></label><label className="image-action">上传图片或 PDF<input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif,application/pdf,.pdf" multiple onChange={chooseDocuments} /></label><span>最多 {MAX_ITEMS} 个资料页（图片与 PDF 页面合计）；每份 PDF 最多 {MAX_PDF_PAGES} 页，3 页并行识别；HEIC 会先在本机转为 JPEG</span></div>
         {uploads.length > 0 && <div className="upload-list">{uploads.map((item) => <div className={`upload-item ${item.status}`} key={item.id}>{item.preview ? <img src={item.preview} alt="待识别资料预览" /> : <span className="file-icon">PDF</span>}<span><strong>{item.name}</strong><small>{item.status === "recognizing" ? "正在识别并填入下方…" : item.status === "done" ? "已识别并填入下方，请核对文字" : item.error || "文件处理失败"}</small></span></div>)}</div>}
-        <textarea value={sourceText} onChange={(event) => { setSourceText(event.target.value); setError(""); }} placeholder="图片或 PDF 识别出的文字会自动放到这里。也可以补充：患者为什么来、外院做过什么、既往治疗、现在有什么不舒服……" aria-label="患者资料" maxLength={12000} />
-        <div className="input-footer"><label className="file-choice">选择文本文件<input type="file" accept=".txt,.md,.json,text/plain" onChange={chooseFile} /></label><span>{sourceText.length}/12000</span></div>
+        <textarea value={sourceText} onChange={(event) => { setSourceText(event.target.value); setError(""); }} placeholder="图片或 PDF 识别出的文字会自动放到这里。也可以补充：患者为什么来、外院做过什么、既往治疗、现在有什么不舒服……" aria-label="患者资料" maxLength={MAX_SOURCE_CHARS} />
+        <div className="input-footer"><label className="file-choice">选择文本文件<input type="file" accept=".txt,.md,.json,text/plain" onChange={chooseFile} /></label><span>{sourceText.length}/{MAX_SOURCE_CHARS}</span></div>
         {error && <p className="error-message" role="alert">{error}</p>}
         <button type="button" className="primary-action" disabled={sourceText.trim().length < 20 || loading || busy} onClick={analyze}>{loading ? <><i className="spinner" />正在整理</> : <>生成主诉和现病史草稿 <b>→</b></>}</button>
         <p className="privacy-copy">文件先在设备本地压缩或分页，再发送识别；演示版请勿上传含可识别患者信息的真实资料。</p>
