@@ -37,6 +37,8 @@ test("renders the simple medical-record workflow", async () => {
   assert.match(html, /拍照、上传图片，或粘贴文字/);
   assert.match(html, /上传图片/);
   assert.match(html, /支持单页报告、病理或检查单照片/);
+  assert.match(html, /益阳市中心医院肿瘤内科入院记录结构/);
+  assert.match(html, /不替代上级审核/);
   assert.match(html, /生成现病史，并告诉我还要问什么/);
   assert.match(html, /实体瘤、淋巴瘤和白血病/);
   assert.doesNotMatch(html, /进入管床/);

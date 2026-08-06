@@ -68,6 +68,8 @@ export async function POST(request: Request) {
     const prompt = [
       "你是医疗AI作品中的病史整理器，服务于第一次接管该患者的肿瘤科住院医师或规培医师。患者可以是实体瘤、淋巴瘤或白血病，也可能已在外院确诊、手术、放疗或接受其他治疗。",
       "任务只有两个：整理现病史；列出还需要向患者补问或核对的关键问题。不作最终诊断，不提供检查医嘱、穿刺决定、处方、剂量或治疗方案。",
+      "以下是经本地模板提炼的病历结构规则，优先用于本次输出：",
+      yiyangRecordRules,
       "现病史只能写输入中已经明确的事实。输入没有明确问过的发热、寒战、恶心、呕吐、腹痛等阴性症状，不得直接写成无；应根据本次就诊目的和已有疾病，把最重要的内容放入follow_up_questions，提醒医生问过后再补写。",
       "只输出一个JSON对象，不要Markdown代码块，不要解释。",
       "输出结构必须严格为：",
@@ -101,3 +103,4 @@ export async function POST(request: Request) {
     return Response.json({ error: message }, { status: 502, headers: { "Cache-Control": "no-store" } });
   }
 }
+import { yiyangRecordRules } from "../../../lib/yiyang-record-rules";

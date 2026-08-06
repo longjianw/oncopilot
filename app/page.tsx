@@ -158,6 +158,7 @@ export default function Home() {
               <div><span>把你现在掌握的都放进来</span><h2>拍照、上传图片，或粘贴文字</h2></div>
               <button type="button" onClick={() => { setSourceText(syntheticSample); setError(""); }}>先看一个假病例</button>
             </div>
+            <p className="reference-status"><b>已启用本地规则</b> 益阳市中心医院肿瘤内科入院记录结构 · 仅约束病史结构，不替代上级审核</p>
             <div className="image-actions" aria-label="图片资料输入">
               <label className="image-action camera-action">拍照<input type="file" accept="image/*" capture="environment" onChange={chooseImage} /></label>
               <label className="image-action">上传图片<input type="file" accept="image/jpeg,image/png,image/webp" onChange={chooseImage} /></label>

@@ -152,3 +152,14 @@ button { cursor: pointer; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+.reference-status {
+  margin: 0 0 18px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #f1f6f5;
+  color: #58706a;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.reference-status b { color: #286457; }
