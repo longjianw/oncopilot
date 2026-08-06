@@ -101,6 +101,10 @@ button { cursor: pointer; }
 .editor-heading button { padding: 7px 10px; border: 1px solid #c9e0e9; border-radius: 8px; color: var(--blue-dark); background: var(--blue-soft); font-size: 9px; font-weight: 800; }
 .history-editor textarea { width: 100%; min-height: 225px; margin-top: 12px; padding: 0; resize: vertical; outline: 0; border: 0; color: #203d4d; background: transparent; font-size: 13px; line-height: 2; }
 .history-editor > span { display: block; padding-top: 10px; border-top: 1px solid #e5edef; color: var(--muted); font-size: 9px; text-align: right; }
+.field-label { display: block; margin-top: 15px; color: #56717e; font-size: 10px; font-weight: 800; }
+.chief-complaint { width: 100%; margin-top: 7px; padding: 10px 0; border: 0; border-bottom: 1px solid #e2ebee; outline: 0; color: #203d4d; background: transparent; font-size: 13px; font-weight: 700; line-height: 1.6; }
+.chief-complaint:focus { border-color: var(--blue); }
+.history-editor .field-label + textarea { margin-top: 4px; }
 
 .follow-up-card { margin-top: 14px; padding: 22px; border: 1px solid var(--line); border-radius: 15px; background: white; }
 .section-heading { display: flex; align-items: center; gap: 9px; }
@@ -114,6 +118,8 @@ button { cursor: pointer; }
 .follow-up-list strong, .follow-up-list small { display: block; }
 .follow-up-list strong { font-size: 11px; line-height: 1.55; }
 .follow-up-list small { margin-top: 3px; color: var(--muted); font-size: 9px; line-height: 1.5; }
+.pending-list { margin-top: 13px; display: flex; flex-wrap: wrap; gap: 8px; }
+.pending-list span { padding: 9px 11px; border: 1px solid #ecdcae; border-radius: 8px; color: #775716; background: var(--amber-soft); font-size: 10px; font-weight: 700; }
 .source-details { margin-top: 14px; padding: 15px 18px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.78); }
 .source-details summary { color: var(--blue-dark); font-size: 10px; font-weight: 800; cursor: pointer; }
 .source-list { margin-top: 12px; display: grid; gap: 8px; }
