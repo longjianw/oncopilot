@@ -1,0 +1,50 @@
+{
+  "case_id": "A03",
+  "case_name": "未来计划与未查体内容不得补写",
+  "synthetic": true,
+  "source_text": "【S1 完全合成既往出院摘要】2026-05因急性髓系白血病接受既往治疗，出院记录写明2026-06-10拟返院继续治疗。【S2 完全合成本次资料】2026-06-12因乏力3天来院复查血常规并评估。未提供专科体格检查、过敏史、个人史或家族史。",
+  "current_purpose": "因乏力复查血常规并评估",
+  "gold": {
+    "required_facts": [
+      { "field": "prior_plan", "value_contains": "拟返院", "encounter_scope": "prior", "certainty": "explicit", "source_ids": ["S1"] },
+      { "field": "current_purpose", "value_contains": "乏力", "encounter_scope": "current", "certainty": "explicit", "source_ids": ["S2"] }
+    ],
+    "forbidden_draft_patterns": [
+      { "section": "present_illness", "patterns": ["本次.*2026-06-10.*继续治疗", "本次入院后.*继续治疗"], "label": "P0_CURRENT_ENCOUNTER_MISMATCH" },
+      { "section": "specialist_exam", "patterns": ["未见异常", "无明显异常", "正常"], "label": "UNSUPPORTED_SPECIALIST_EXAM" },
+      { "section": "allergy_history", "patterns": ["否认", "无"], "label": "UNSUPPORTED_NEGATIVE_HISTORY" }
+    ],
+    "must_be_empty_sections": ["personal_history", "family_history", "allergy_history", "specialist_exam", "diagnosis_summary", "plan_summary"],
+    "required_draft_text": [{ "section": "present_illness", "any": ["乏力3天", "乏力"] }]
+  },
+  "reference_output": {
+    "sources": [
+      { "source_id": "S1", "title": "完全合成既往出院摘要", "evidence": "既往治疗及当时未来返院计划" },
+      { "source_id": "S2", "title": "完全合成本次资料", "evidence": "本次症状和来院目的" }
+    ],
+    "facts": [
+      { "fact_id": "F1", "field": "prior_plan", "value": "出院记录写明2026-06-10拟返院继续治疗", "event_time": "2026-05出院时", "event_type": "other", "encounter_scope": "prior", "certainty": "explicit", "source_ids": ["S1"] },
+      { "fact_id": "F2", "field": "current_purpose", "value": "因乏力3天来院复查血常规并评估", "event_time": "2026-06-12", "event_type": "current_purpose", "encounter_scope": "current", "certainty": "explicit", "source_ids": ["S2"] }
+    ],
+    "draft": {
+      "chief_complaint": "确诊急性髓系白血病1个月，乏力3天",
+      "present_illness": "患者2026-05因急性髓系白血病接受既往治疗，既往出院记录载有当时拟返院继续治疗的计划。2026-06-12因乏力3天来院复查血常规并评估。",
+      "past_history": "",
+      "personal_history": "",
+      "family_history": "",
+      "allergy_history": "",
+      "specialist_exam": "",
+      "diagnosis_summary": "",
+      "plan_summary": ""
+    }
+  },
+  "constructed_failure": {
+    "sources": [{ "source_id": "S1", "title": "出院摘要", "evidence": "计划" }, { "source_id": "S2", "title": "本次资料", "evidence": "乏力" }],
+    "facts": [
+      { "fact_id": "F1", "field": "prior_plan", "value": "拟返院继续治疗", "event_time": "2026-05", "event_type": "other", "encounter_scope": "prior", "certainty": "explicit", "source_ids": ["S1"] },
+      { "fact_id": "F2", "field": "current_purpose", "value": "因乏力复查", "event_time": "2026-06-12", "event_type": "current_purpose", "encounter_scope": "current", "certainty": "explicit", "source_ids": ["S2"] }
+    ],
+    "draft": { "chief_complaint": "白血病入院治疗", "present_illness": "本次于2026-06-10返院继续治疗。患者乏力。", "past_history": "", "personal_history": "无特殊", "family_history": "无特殊", "allergy_history": "否认药物过敏", "specialist_exam": "专科查体未见异常", "diagnosis_summary": "急性髓系白血病", "plan_summary": "继续治疗" }
+  },
+  "expected_failure_labels": ["P0_CURRENT_ENCOUNTER_MISMATCH", "UNSUPPORTED_SPECIALIST_EXAM", "UNSUPPORTED_NEGATIVE_HISTORY", "UNSUPPORTED_SECTION_CONTENT:diagnosis_summary", "UNSUPPORTED_SECTION_CONTENT:plan_summary"]
+}

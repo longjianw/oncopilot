@@ -96,7 +96,7 @@ button { cursor: pointer; }
 .output-promise strong { font-size: 11px; }
 .output-promise small { margin-top: 3px; color: var(--muted); font-size: 9px; line-height: 1.4; }
 
-.result-stage { max-width: 900px; }
+.result-stage { max-width: 1080px; }
 .result-title { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
 .result-title > div { display: flex; align-items: center; gap: 13px; }
 .success-mark { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 50%; color: white; background: var(--green); font-size: 18px; font-weight: 900; box-shadow: 0 0 0 7px rgba(24,128,94,.1); }
@@ -178,3 +178,46 @@ button { cursor: pointer; }
 }
 
 .reference-status b { color: #286457; }
+
+.purpose-field { margin-top: 18px; display: block; }
+.purpose-field > span { display: block; color: var(--ink); font-size: 11px; font-weight: 850; }
+.purpose-field > span b { margin-left: 5px; color: var(--blue); font-size: 9px; }
+.purpose-field input { width: 100%; margin-top: 8px; padding: 12px 13px; outline: 0; border: 1px solid #cbdde4; border-radius: 10px; background: #fbfdfe; font-size: 12px; }
+.purpose-field input:focus { border-color: var(--blue); box-shadow: 0 0 0 4px rgba(20,122,167,.1); }
+.purpose-field small { display: block; margin-top: 6px; color: var(--muted); font-size: 9px; }
+
+.output-promise.three-items { grid-template-columns: repeat(3, 1fr); }
+.draft-package { padding-top: 38px; }
+.copy-all { padding: 10px 14px; border: 1px solid #bcd9e4; border-radius: 9px; color: var(--blue-dark); background: white; font-size: 10px; font-weight: 850; }
+.safety-banner { margin-top: 22px; padding: 13px 16px; display: flex; align-items: center; gap: 11px; border: 1px solid #d9e8df; border-radius: 11px; color: #4f7064; background: var(--green-soft); font-size: 10px; }
+.safety-banner strong { color: #24664f; white-space: nowrap; }
+.draft-grid { margin-top: 14px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.draft-section { padding: 18px; border: 1px solid var(--line); border-radius: 14px; background: white; box-shadow: 0 10px 28px rgba(32,75,94,.05); }
+.draft-section.wide { grid-column: 1 / -1; }
+.draft-section.doctor-only { border-color: #d8dfed; background: #fbfcff; }
+.draft-section > div { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+.draft-section label { color: var(--navy); font-size: 13px; font-weight: 900; }
+.draft-section > div small { color: var(--muted); font-size: 9px; text-align: right; }
+.draft-section textarea { width: 100%; min-height: 94px; margin-top: 11px; padding: 12px; resize: vertical; outline: 0; border: 1px solid #e0e9ed; border-radius: 9px; color: #203d4d; background: #fbfdfe; font-size: 12px; line-height: 1.85; }
+.draft-section.wide textarea { min-height: 170px; }
+.draft-section textarea:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(20,122,167,.08); }
+.draft-section textarea::placeholder { color: #a7b4ba; }
+.fact-list { margin-top: 13px; display: grid; gap: 8px; }
+.fact-list > div { padding: 10px 11px; display: grid; grid-template-columns: 58px 1fr; align-items: start; gap: 9px; border-radius: 9px; background: #f5f8f9; }
+.fact-list p { margin: 0; }
+.fact-list strong, .fact-list small { display: block; }
+.fact-list strong { font-size: 10px; line-height: 1.55; }
+.fact-list small { margin-top: 3px; color: var(--muted); font-size: 9px; }
+.certainty { padding: 5px 6px; border-radius: 6px; color: var(--blue-dark); background: var(--blue-soft); font-size: 8px; font-weight: 850; text-align: center; }
+.certainty.uncertain, .certainty.pending { color: var(--amber); background: var(--amber-soft); }
+.certainty.doctor_confirmed { color: var(--green); background: var(--green-soft); }
+
+@media (max-width: 760px) {
+  .output-promise.three-items, .draft-grid { grid-template-columns: 1fr; }
+  .draft-section.wide { grid-column: auto; }
+  .result-title { gap: 13px; flex-wrap: wrap; }
+  .copy-all { width: 100%; }
+  .safety-banner { align-items: flex-start; flex-direction: column; gap: 4px; }
+  .draft-section > div { align-items: flex-start; flex-direction: column; gap: 4px; }
+  .draft-section > div small { text-align: left; }
+}

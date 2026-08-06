@@ -1,0 +1,50 @@
+{
+  "case_id": "A01",
+  "case_name": "既往治疗不得写成本次经过",
+  "synthetic": true,
+  "source_text": "【S1 完全合成外院资料】2025-10行结肠肿物切除术，术后病理提示腺癌。2025-11至2026-03完成既往辅助治疗。2026-07复查影像提示肝内新发低密度灶，考虑转移可能。【S2 完全合成本次资料】本次来院目的：复查并由医生评估后续安排。近1周无发热，食纳尚可。",
+  "current_purpose": "复查并由医生评估后续安排",
+  "gold": {
+    "required_facts": [
+      { "field": "surgery", "value_contains": "切除术", "encounter_scope": "prior", "certainty": "explicit", "source_ids": ["S1"] },
+      { "field": "current_purpose", "value_contains": "复查", "encounter_scope": "current", "certainty": "explicit", "source_ids": ["S2"] }
+    ],
+    "forbidden_draft_patterns": [
+      { "section": "present_illness", "patterns": ["本次入院后.*切除术", "入院后.*完成.*辅助治疗"], "label": "P0_CURRENT_ENCOUNTER_MISMATCH" },
+      { "section": "present_illness", "patterns": ["肝转移[。；，]", "确诊肝转移"], "label": "P0_CERTAINTY_INFLATION" }
+    ],
+    "must_be_empty_sections": ["personal_history", "family_history", "allergy_history", "specialist_exam", "diagnosis_summary", "plan_summary"],
+    "required_draft_text": [{ "section": "present_illness", "any": ["考虑转移可能", "转移可能"] }]
+  },
+  "reference_output": {
+    "sources": [
+      { "source_id": "S1", "title": "完全合成外院资料", "evidence": "既往手术、病理、辅助治疗及复查影像" },
+      { "source_id": "S2", "title": "完全合成本次资料", "evidence": "本次来院目的及近期情况" }
+    ],
+    "facts": [
+      { "fact_id": "F1", "field": "surgery", "value": "行结肠肿物切除术", "event_time": "2025-10", "event_type": "prior_treatment", "encounter_scope": "prior", "certainty": "explicit", "source_ids": ["S1"] },
+      { "fact_id": "F2", "field": "progression_evidence", "value": "肝内新发低密度灶，考虑转移可能", "event_time": "2026-07", "event_type": "progression_evidence", "encounter_scope": "prior", "certainty": "uncertain", "source_ids": ["S1"] },
+      { "fact_id": "F3", "field": "current_purpose", "value": "复查并由医生评估后续安排", "event_time": "本次", "event_type": "current_purpose", "encounter_scope": "current", "certainty": "explicit", "source_ids": ["S2"] }
+    ],
+    "draft": {
+      "chief_complaint": "结肠癌术后10个月，发现肝内异常1个月，入院复查",
+      "present_illness": "患者2025-10于外院行结肠肿物切除术，术后病理提示腺癌；2025-11至2026-03完成既往辅助治疗。2026-07复查影像提示肝内新发低密度灶，考虑转移可能。本次为复查并由医生评估后续安排来院，近1周无发热，食纳尚可。",
+      "past_history": "",
+      "personal_history": "",
+      "family_history": "",
+      "allergy_history": "",
+      "specialist_exam": "",
+      "diagnosis_summary": "",
+      "plan_summary": ""
+    }
+  },
+  "constructed_failure": {
+    "sources": [{ "source_id": "S1", "title": "资料", "evidence": "资料" }, { "source_id": "S2", "title": "资料", "evidence": "资料" }],
+    "facts": [
+      { "fact_id": "F1", "field": "surgery", "value": "行结肠肿物切除术", "event_time": "2025-10", "event_type": "prior_treatment", "encounter_scope": "prior", "certainty": "explicit", "source_ids": ["S1"] },
+      { "fact_id": "F3", "field": "current_purpose", "value": "复查", "event_time": "本次", "event_type": "current_purpose", "encounter_scope": "current", "certainty": "explicit", "source_ids": ["S2"] }
+    ],
+    "draft": { "chief_complaint": "入院治疗", "present_illness": "本次入院后行结肠肿物切除术并完成辅助治疗，现确诊肝转移。", "past_history": "", "personal_history": "", "family_history": "", "allergy_history": "", "specialist_exam": "", "diagnosis_summary": "", "plan_summary": "" }
+  },
+  "expected_failure_labels": ["P0_CURRENT_ENCOUNTER_MISMATCH", "P0_CERTAINTY_INFLATION"]
+}
