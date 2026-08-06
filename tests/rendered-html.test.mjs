@@ -34,9 +34,12 @@ test("renders the simple medical-record workflow", async () => {
   assert.match(html, /肿瘤病史整理助手/);
   assert.match(html, /把一堆患者资料/);
   assert.match(html, /可直接粘贴的病历草稿/);
-  assert.match(html, /拍照、上传图片，或粘贴文字/);
+  assert.match(html, /拍照、上传文件，或粘贴文字/);
   assert.match(html, /上传图片/);
-  assert.match(html, /支持单页报告、病理或检查单照片/);
+  assert.match(html, /上传图片或 PDF/);
+  assert.match(html, /HEIC 会先在本机转为 JPEG/);
+  assert.match(html, /最多/);
+  assert.match(html, /PDF 最多/);
   assert.match(html, /益阳市中心医院肿瘤内科入院记录结构/);
   assert.match(html, /不替代上级审核/);
   assert.match(html, /生成主诉和现病史草稿/);

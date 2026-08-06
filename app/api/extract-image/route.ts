@@ -28,7 +28,7 @@ export async function POST(request: Request) {
     const image = formData.get("image");
     if (!(image instanceof File)) return Response.json({ error: "请先选择一张图片。" }, { status: 400 });
     if (!image.type.startsWith("image/")) return Response.json({ error: "只支持图片文件。" }, { status: 400 });
-    if (image.size > 8_000_000) return Response.json({ error: "单张图片请控制在 8MB 以内。" }, { status: 400 });
+    if (image.size > 2_000_000) return Response.json({ error: "图片过大，请在设备上压缩或裁剪为单页后重试。" }, { status: 400 });
 
     // 图片可复用 Coding Plan 的服务端密钥；视觉变量仅用于有独立服务时覆盖。
     const apiKey = process.env.ARK_VISION_API_KEY || process.env.ARK_CODING_API_KEY;
@@ -69,7 +69,10 @@ export async function POST(request: Request) {
       signal: AbortSignal.timeout(75000),
     });
 
-    if (!upstream.ok) throw new Error(`视觉模型请求失败：${upstream.status}`);
+    if (!upstream.ok) {
+      const detail = await upstream.text();
+      throw new Error(`视觉模型请求失败：${upstream.status} ${detail.slice(0, 120)}`);
+    }
     const data = await upstream.json() as VisionResponse;
     const extractedText = responseText(data);
     if (!extractedText) throw new Error("视觉模型没有返回可用文字");
@@ -78,7 +81,9 @@ export async function POST(request: Request) {
   } catch (error) {
     const message = error instanceof Error && error.name === "TimeoutError"
       ? "图片识别超时，请拍得更清楚或缩小图片后重试。"
-      : "图片暂时没有识别出来，请重试一次。";
+      : error instanceof Error && /413|Payload Too Large/.test(error.message)
+        ? "图片仍然过大，请裁剪到单页后重试。"
+        : "图片暂时没有识别出来，请重试一次。";
     return Response.json({ error: message }, { status: 502, headers: { "Cache-Control": "no-store" } });
   }
 }

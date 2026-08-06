@@ -65,6 +65,15 @@ button { cursor: pointer; }
 .image-preview strong { color: #28684f; font-size: 10px; }
 .image-preview small { margin-top: 3px; color: #5b7c6f; font-size: 9px; }
 .image-preview button { width: 27px; height: 27px; border: 0; border-radius: 50%; color: #4b6f61; background: rgba(255,255,255,.7); font-size: 17px; line-height: 1; }
+.upload-list { margin-top: 12px; display: grid; gap: 8px; }
+.upload-item { min-height: 60px; padding: 8px 10px; display: grid; grid-template-columns: 54px 1fr; gap: 10px; align-items: center; border: 1px solid #d7e7e2; border-radius: 10px; background: var(--green-soft); }
+.upload-item.error { border-color: #efceca; background: var(--red-soft); }
+.upload-item img { width: 54px; height: 42px; object-fit: cover; border-radius: 6px; background: white; }
+.file-icon { width: 54px; height: 42px; display: grid; place-items: center; border-radius: 6px; color: var(--red); background: white; font-size: 10px; font-weight: 900; }
+.upload-item strong, .upload-item small { display: block; }
+.upload-item strong { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.upload-item small { margin-top: 3px; color: #5b7c6f; font-size: 9px; }
+.upload-item.error small { color: var(--red); }
 .input-card textarea { width: 100%; min-height: 255px; margin-top: 18px; padding: 16px; resize: vertical; outline: none; border: 1px solid #cbdde4; border-radius: 12px; background: #fbfdfe; font-size: 12px; line-height: 1.75; transition: border-color .18s, box-shadow .18s; }
 .input-card textarea:focus { border-color: var(--blue); box-shadow: 0 0 0 4px rgba(20,122,167,.1); }
 .input-footer { margin-top: 9px; display: flex; justify-content: space-between; color: #85969f; font-size: 9px; }
