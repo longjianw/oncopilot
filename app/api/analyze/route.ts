@@ -7,6 +7,7 @@ import {
   isValidFactExtraction,
 } from "../../../lib/admission-record-contract";
 import { yiyangRecordRules } from "../../../lib/yiyang-record-rules";
+import { buildGuidedDraft } from "../../../lib/guided-review";
 
 type ArkResponse = {
   output_text?: string;
@@ -137,10 +138,18 @@ export async function POST(request: Request) {
     if (!isValidFactExtraction(extraction)) throw new Error("事实抽取结构不完整");
     const rawDraft = await requestJson(baseUrl, apiKey, model, buildDraftPrompt(extraction));
     if (!isValidAdmissionDraft(rawDraft)) throw new Error("草稿包结构不完整");
-    const draft = forceEvidenceBoundSections(extraction, rawDraft);
-    if (hasUnsupportedDoctorJudgment(extraction, draft)) throw new Error("诊断或计划缺少医生明确判断来源");
+    const evidenceDraft = forceEvidenceBoundSections(extraction, rawDraft);
+    if (hasUnsupportedDoctorJudgment(extraction, evidenceDraft)) throw new Error("诊断或计划缺少医生明确判断来源");
+    const guided = buildGuidedDraft(extraction, evidenceDraft);
 
-    const result: AnalysisResult = { ...draft, sources: extraction.sources, facts: extraction.facts };
+    const result: AnalysisResult = {
+      ...guided.draft,
+      sources: extraction.sources,
+      facts: extraction.facts,
+      review_items: guided.review_items,
+      template_mode: guided.template_mode,
+      template_name: guided.template_name,
+    };
     return Response.json({ model, result }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     const message = error instanceof Error && error.name === "TimeoutError"

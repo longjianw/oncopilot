@@ -61,6 +61,9 @@ export type AdmissionDraft = {
 export type AnalysisResult = AdmissionDraft & {
   sources: SourceReference[];
   facts: ExtractedFact[];
+  review_items: import("./guided-review").GuidedReviewItem[];
+  template_mode: boolean;
+  template_name: string;
 };
 
 const isString = (value: unknown): value is string => typeof value === "string";

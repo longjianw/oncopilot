@@ -7,7 +7,9 @@ type Stage = "input" | "result";
 type UploadStatus = "preparing" | "recognizing" | "done" | "error";
 type DraftField = "chief_complaint" | "present_illness" | "past_history" | "personal_history" | "family_history" | "allergy_history" | "specialist_exam" | "diagnosis_summary" | "plan_summary";
 type Fact = { fact_id: string; field: string; value: string; event_time: string; event_type: string; encounter_scope: "prior" | "current" | "unclear"; certainty: "explicit" | "doctor_confirmed" | "uncertain" | "pending"; source_ids: string[] };
-type AnalysisResult = Record<DraftField, string> & { pending_fields: string[]; sources: Array<{ source_id: string; title: string; evidence: string }>; facts: Fact[] };
+type ReviewOption = { option_id: string; label: string; text: string; tone: "positive" | "negative" | "neutral" };
+type ReviewItem = { choice_id: string; group: "发病与确诊" | "症状核对" | "其他病史" | "专科查体"; section: DraftField; prompt: string; help: string; options: ReviewOption[] };
+type AnalysisResult = Record<DraftField, string> & { pending_fields: string[]; sources: Array<{ source_id: string; title: string; evidence: string }>; facts: Fact[]; review_items: ReviewItem[]; template_mode: boolean; template_name: string };
 type UploadItem = { id: string; name: string; preview?: string; status: UploadStatus; error?: string };
 type PreparedInput = { name: string; file: File; preview?: string };
 
@@ -30,16 +32,8 @@ const sectionLabels: Array<{ field: DraftField; label: string; hint: string; lar
   { field: "plan_summary", label: "计划整理", hint: "只整理医生已明确给出的计划，不新增治疗建议", large: true },
 ];
 
-const syntheticSample = `【S1 外院病理与治疗摘要｜完全合成】
-患者，女，50-59岁。2026-01因颈部淋巴结肿大于外院行淋巴结活检，病理提示弥漫大B细胞淋巴瘤。2026-02至2026-06完成4周期既往系统治疗，具体剂量未提供。治疗后颈部肿大较前缩小。
-
-【S2 本次情况｜完全合成】
-近1周精神、食纳尚可，无发热、寒战及皮肤出血点。既往有高血压病史5年，规律口服药物，具体药名待核对。青霉素过敏，曾出现皮疹。个人史及家族史未提供。
-
-【S3 医生本次查体与明确判断｜完全合成】
-专科查体：左颈部可触及约1.5cm×1.0cm淋巴结，质韧，活动度尚可，无明显压痛。
-医生记录的初步诊断：弥漫大B细胞淋巴瘤治疗后。
-医生记录的计划：核对外院病理及既往治疗资料，完善本次评估后由上级医师确认后续安排。`;
+const syntheticSample = `【S1 完全合成简要资料】
+患者已确诊黑色素瘤3天，免疫组化已完成，具体结果未提供。其他检查、既往病史、近期症状及专科查体均未提供。`;
 
 const isHeic = (file: File) => file.type === "image/heic" || file.type === "image/heif" || /\.hei[cf]$/i.test(file.name);
 const isPdf = (file: File) => file.type === "application/pdf" || /\.pdf$/i.test(file.name);
@@ -108,12 +102,26 @@ export default function Home() {
   const [draft, setDraft] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [uploads, setUploads] = useState<UploadItem[]>([]);
+  const [selectedChoices, setSelectedChoices] = useState<Record<string, string>>({});
+  const [appliedChoiceText, setAppliedChoiceText] = useState<Record<string, string>>({});
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
   const busy = uploads.some((item) => item.status === "preparing" || item.status === "recognizing");
 
   const updateUpload = (id: string, patch: Partial<UploadItem>) => setUploads((items) => items.map((item) => item.id === id ? { ...item, ...patch } : item));
   const updateDraft = (field: DraftField, value: string) => setDraft((current) => current ? { ...current, [field]: value } : current);
+  const selectReviewOption = (item: ReviewItem, selected: ReviewOption) => {
+    const previousText = appliedChoiceText[item.choice_id] || "";
+    setDraft((current) => {
+      if (!current) return current;
+      let sectionText = current[item.section];
+      if (previousText && sectionText.includes(previousText)) sectionText = sectionText.replace(previousText, "").replace(/\s{2,}/g, " ").trim();
+      if (selected.text) sectionText = [sectionText.trim(), selected.text].filter(Boolean).join(" ");
+      return { ...current, [item.section]: sectionText };
+    });
+    setSelectedChoices((current) => ({ ...current, [item.choice_id]: selected.option_id }));
+    setAppliedChoiceText((current) => ({ ...current, [item.choice_id]: selected.text }));
+  };
 
   const analyze = async () => {
     if (sourceText.trim().length < 20 || loading) return;
@@ -171,20 +179,23 @@ export default function Home() {
     setSourceText(await file.text()); setError("");
   };
 
-  const reset = () => { setStage("input"); setSourceText(""); setCurrentPurpose(""); setDraft(null); setUploads([]); setCopied(false); setError(""); };
+  const reset = () => { setStage("input"); setSourceText(""); setCurrentPurpose(""); setDraft(null); setUploads([]); setSelectedChoices({}); setAppliedChoiceText({}); setCopied(false); setError(""); };
   const copyDraft = async () => {
     if (!draft) return;
     const text = sectionLabels.map(({ field, label }) => draft[field].trim() ? `${label}：\n${draft[field].trim()}` : "").filter(Boolean).join("\n\n");
     await navigator.clipboard.writeText(text); setCopied(true); window.setTimeout(() => setCopied(false), 1600);
   };
+  const selectedCount = Object.keys(selectedChoices).length;
+  const unresolvedMarkers = draft ? sectionLabels.filter(({ field }) => /【[^】]+】/.test(draft[field])).length : 0;
+  const reviewGroups = draft ? (["发病与确诊", "症状核对", "其他病史", "专科查体"] as const).map((group) => ({ group, items: draft.review_items.filter((item) => item.group === group) })).filter(({ items }) => items.length) : [];
 
   return <main className="site-shell">
-    <header className="site-header"><button type="button" className="wordmark" onClick={reset} aria-label="返回首页"><span>OP</span><div><strong>OncoPilot</strong><small>肿瘤入院记录草稿助手</small></div></button><div className="model-pill"><i /> 事实核对后生成</div></header>
+    <header className="site-header"><button type="button" className="wordmark" onClick={reset} aria-label="返回首页"><span>OP</span><div><strong>OncoPilot</strong><small>肿瘤入院记录草稿助手</small></div></button><div className="model-pill"><i /> 候选项需医生确认</div></header>
     <div className="stage-line two-steps" aria-label="当前流程"><span className={stage === "input" ? "active" : "done"}><b>1</b>放入资料</span><i /><span className={stage === "result" ? "active" : ""}><b>2</b>核对草稿包</span></div>
     {stage === "input" && <section className="single-flow input-stage">
-      <div className="hero-copy"><span className="eyebrow">单入口 · 入院记录草稿包</span><h1>把分散的患者资料，整理成<br /><em>一套可编辑的入院记录草稿</em></h1><p>先核对来源、时间和“既往/本次”，再整理主诉、现病史、各项病史、专科查体，以及医生已明确判断后的诊断与计划。</p></div>
+      <div className="hero-copy"><span className="eyebrow">单入口 · 入院记录草稿包</span><h1>资料再少，也先给你<br /><em>一套可选择、可补全的草稿</em></h1><p>已提供的内容先整理成事实；未提供的部分按肿瘤类型生成选择项。你点选确认后，句子才会加入草稿，不用从空白开始默写。</p></div>
       <div className="input-card">
-        <div className="card-heading"><div><span>第一步只有这一个入口</span><h2>拍照、上传文件，或粘贴文字</h2></div><button type="button" onClick={() => { setSourceText(syntheticSample); setCurrentPurpose("继续评估既往治疗效果并核对后续安排"); setError(""); }}>先看一个假病例</button></div>
+        <div className="card-heading"><div><span>第一步只有这一个入口</span><h2>拍照、上传文件，或粘贴文字</h2></div><button type="button" onClick={() => { setSourceText(syntheticSample); setCurrentPurpose("进一步抗肿瘤治疗"); setError(""); }}>试试少量资料</button></div>
         <p className="reference-status"><b>安全边界</b> 仅使用完全合成或严格脱敏资料；本地规则只约束草稿结构，不替代本院模板和上级审核。</p>
         <label className="purpose-field"><span>本次来院目的 <b>可选，但建议填写</b></span><input value={currentPurpose} onChange={(event) => setCurrentPurpose(event.target.value)} maxLength={160} placeholder="例如：继续治疗、复查评估、处理新出现的症状……" /><small>这行用于区分既往住院、出院计划与本次就诊。</small></label>
         <div className="image-actions" aria-label="资料文件输入"><label className="image-action camera-action">拍照<input type="file" accept="image/*" capture="environment" multiple onChange={chooseDocuments} /></label><label className="image-action">上传图片或 PDF<input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif,application/pdf,.pdf" multiple onChange={chooseDocuments} /></label><span>最多 {MAX_ITEMS} 个资料页；PDF 最多 {MAX_PDF_PAGES} 页；HEIC 会先在本机转换</span></div>
@@ -193,17 +204,21 @@ export default function Home() {
         <div className="input-footer"><label className="file-choice">选择文本文件<input type="file" accept=".txt,.md,.json,text/plain" onChange={chooseFile} /></label><span>{sourceText.length}/{MAX_SOURCE_CHARS}</span></div>
         {error && <p className="error-message" role="alert">{error}</p>}
         <button type="button" className="primary-action" disabled={sourceText.trim().length < 20 || loading || busy} onClick={analyze}>{loading ? <><i className="spinner" />正在先核对事实，再生成草稿</> : <>生成入院记录草稿包 <b>→</b></>}</button>
-        <p className="privacy-copy">不会用未询问内容补写阴性病史，也不会把未查体内容写成正常。</p>
+        <p className="privacy-copy">系统会提供候选阴性项和查体模板，但只有你点击确认后才加入草稿。</p>
       </div>
-      <div className="output-promise three-items" aria-label="系统输出"><div><b>01</b><span><strong>结构化事实</strong><small>来源、时间、本次/既往、证据强度</small></span></div><div><b>02</b><span><strong>完整草稿包</strong><small>九个可编辑模块，一次复制</small></span></div><div><b>03</b><span><strong>医生最终核对</strong><small>诊断和计划只整理已明确判断</small></span></div></div>
+      <div className="output-promise three-items" aria-label="系统输出"><div><b>01</b><span><strong>先整理已知事实</strong><small>来源、时间、本次/既往、证据强度</small></span></div><div><b>02</b><span><strong>再给候选选项</strong><small>症状、病史、检查经过和专科查体</small></span></div><div><b>03</b><span><strong>点选后进入草稿</strong><small>保留人工判断，又不用从零书写</small></span></div></div>
     </section>}
     {stage === "result" && draft && <section className="single-flow result-stage draft-package">
-      <div className="result-title"><div><span className="success-mark">✓</span><span><small>草稿包已生成</small><h1>逐项核对，再放进入院记录</h1></span></div><button type="button" className="copy-all" onClick={copyDraft}>{copied ? "已复制全部非空模块" : "复制全部非空模块"}</button></div>
-      <div className="safety-banner"><strong>这是一份可编辑工作稿</strong><span>空白表示资料未提供，不代表阴性或正常；诊断与计划仍由医生负责确认。</span></div>
+      <div className="result-title"><div><span className="success-mark">✓</span><span><small>草稿骨架与候选项已生成</small><h1>先点选补全，再微调文字</h1></span></div><button type="button" className="copy-all" onClick={copyDraft}>{copied ? "已复制当前草稿" : unresolvedMarkers ? "复制当前草稿（含待完成标记）" : "复制当前草稿"}</button></div>
+      <div className="safety-banner"><strong>{draft.template_name}</strong><span>方括号是待完成项；下面的候选内容默认不算事实，只有点击后才加入对应草稿。</span></div>
+      {draft.review_items.length > 0 && <section className="guided-review">
+        <div className="guided-heading"><div><span>快速补全</span><h2>把问诊和查体改成选择题</h2><p>已选择 {selectedCount}/{draft.review_items.length} 项。阳性结果仍可在草稿中补具体时间、部位和程度。</p></div><div className="choice-legend"><span className="positive">有 / 异常</span><span className="negative">无 / 正常</span><span>未问 / 未查</span></div></div>
+        <div className="review-groups">{reviewGroups.map(({ group, items }) => <section className="review-group" key={group}><h3>{group}</h3><div className="review-items">{items.map((item) => <div className="review-item" key={item.choice_id}><div className="review-question"><strong>{item.prompt}</strong><small>{item.help}</small></div><div className="review-options">{item.options.map((option) => <button type="button" key={option.option_id} className={`${option.tone} ${selectedChoices[item.choice_id] === option.option_id ? "selected" : ""}`} onClick={() => selectReviewOption(item, option)}>{option.label}</button>)}</div></div>)}</div></section>)}</div>
+      </section>}
       <div className="draft-grid">
         {sectionLabels.map(({ field, label, hint, large }) => <section className={`draft-section ${large ? "wide" : ""} ${field === "diagnosis_summary" || field === "plan_summary" ? "doctor-only" : ""}`} key={field}>
           <div><label htmlFor={field}>{label}</label><small>{hint}</small></div>
-          <textarea id={field} value={draft[field]} onChange={(event) => updateDraft(field, event.target.value)} placeholder="资料未提供，留空待医生核对" rows={large ? 7 : 4} />
+          <textarea id={field} value={draft[field]} onChange={(event) => updateDraft(field, event.target.value)} placeholder="可在上方点选候选项，也可直接输入" rows={large ? 7 : 4} />
         </section>)}
       </div>
       {draft.pending_fields.length > 0 && <section className="follow-up-card pending-card"><div className="section-heading"><span>待核对</span><h2>这些缺口可能影响草稿落笔</h2></div><div className="pending-list">{draft.pending_fields.map((item) => <span key={item}>{item}</span>)}</div></section>}

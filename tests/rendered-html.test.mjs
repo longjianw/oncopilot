@@ -32,17 +32,21 @@ async function analyzeWithMockModel() {
   const { default: worker } = await import(workerUrl.href);
   const responses = [
     {
-      current_purpose: "复查评估",
-      sources: [{ source_id: "S1", title: "完全合成资料", evidence: "既往治疗及本次目的" }],
+      current_purpose: "进一步抗肿瘤治疗",
+      sources: [
+        { source_id: "S1", title: "完全合成资料", evidence: "确诊黑色素瘤及免疫组化" },
+        { source_id: "S-PURPOSE", title: "本次来院目的", evidence: "进一步抗肿瘤治疗" },
+      ],
       facts: [
-        { fact_id: "F1", field: "treatment", value: "2026-01完成既往治疗", event_time: "2026-01", event_type: "prior_treatment", encounter_scope: "prior", certainty: "explicit", source_ids: ["S1"] },
-        { fact_id: "F2", field: "current_purpose", value: "复查评估", event_time: "本次", event_type: "current_purpose", encounter_scope: "current", certainty: "explicit", source_ids: ["S1"] },
+        { fact_id: "F1", field: "diagnosis", value: "确诊黑色素瘤3天", event_time: "3天前", event_type: "onset_diagnosis", encounter_scope: "prior", certainty: "explicit", source_ids: ["S1"] },
+        { fact_id: "F2", field: "pathology", value: "免疫组化已完成，具体结果未提供", event_time: "未提供", event_type: "pathology_molecular", encounter_scope: "prior", certainty: "explicit", source_ids: ["S1"] },
+        { fact_id: "F3", field: "current_purpose", value: "进一步抗肿瘤治疗", event_time: "本次", event_type: "current_purpose", encounter_scope: "current", certainty: "explicit", source_ids: ["S-PURPOSE"] },
       ],
       pending_fields: ["过敏史：待核对"],
     },
     {
-      chief_complaint: "治疗后1个月，入院复查评估",
-      present_illness: "患者2026-01完成既往治疗，本次为复查评估来院。",
+      chief_complaint: "确诊黑色素瘤3天，入院进一步抗肿瘤治疗",
+      present_illness: "患者3天前确诊黑色素瘤，免疫组化已完成，具体结果未提供。本次为进一步抗肿瘤治疗来院。",
       past_history: "模型不应保留这段无来源既往史",
       personal_history: "无特殊",
       family_history: "否认相关家族史",
@@ -58,7 +62,7 @@ async function analyzeWithMockModel() {
   globalThis.fetch = async () => new Response(JSON.stringify({ output_text: JSON.stringify(responses[calls++]) }), { status: 200 });
   try {
     const response = await worker.fetch(
-      new Request("http://localhost/api/analyze", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ source_text: "【S1 完全合成资料】2026-01完成既往治疗，本次来院复查评估。", current_purpose: "复查评估" }) }),
+      new Request("http://localhost/api/analyze", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ source_text: "【S1 完全合成资料】患者已确诊黑色素瘤3天，免疫组化已完成，具体结果未提供。", current_purpose: "进一步抗肿瘤治疗" }) }),
       { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) }, ARK_CODING_API_KEY: "synthetic-test-key" },
       { waitUntil() {}, passThroughOnException() {} },
     );
@@ -74,8 +78,8 @@ test("renders the single-entry admission draft package workflow", async () => {
   const html = await response.text();
   assert.match(html, /OncoPilot/);
   assert.match(html, /肿瘤入院记录草稿助手/);
-  assert.match(html, /把分散的患者资料/);
-  assert.match(html, /一套可编辑的入院记录草稿/);
+  assert.match(html, /资料再少/);
+  assert.match(html, /一套可选择、可补全的草稿/);
   assert.match(html, /拍照、上传文件，或粘贴文字/);
   assert.match(html, /上传图片/);
   assert.match(html, /上传图片或 PDF/);
@@ -86,9 +90,9 @@ test("renders the single-entry admission draft package workflow", async () => {
   assert.match(html, /不替代本院模板和上级审核/);
   assert.match(html, /本次来院目的/);
   assert.match(html, /生成入院记录草稿包/);
-  assert.match(html, /结构化事实/);
-  assert.match(html, /医生最终核对/);
-  assert.match(html, /不会用未询问内容补写阴性病史/);
+  assert.match(html, /先整理已知事实/);
+  assert.match(html, /再给候选选项/);
+  assert.match(html, /只有你点击确认后才加入草稿/);
   assert.doesNotMatch(html, /进入管床/);
   assert.doesNotMatch(html, /合成患者 A02/);
   assert.doesNotMatch(html, /codex-preview/);
@@ -102,19 +106,24 @@ test("rejects image extraction clearly when no vision service is configured", as
   assert.match(body.error, /图片识别服务尚未配置/);
 });
 
-test("extracts facts before drafting and clears sections without evidence", async () => {
+test("extracts facts first and adds melanoma scaffolds plus guided choices", async () => {
   const { response, calls } = await analyzeWithMockModel();
   assert.equal(response.status, 200);
   assert.equal(calls, 2);
   const body = await response.json();
-  assert.equal(body.result.facts.length, 2);
+  assert.equal(body.result.facts.length, 3);
   assert.equal(body.result.current_purpose, undefined);
-  assert.equal(body.result.past_history, "");
-  assert.equal(body.result.personal_history, "");
-  assert.equal(body.result.family_history, "");
-  assert.equal(body.result.allergy_history, "");
-  assert.equal(body.result.specialist_exam, "");
+  assert.match(body.result.present_illness, /首次发现时间/);
+  assert.match(body.result.past_history, /待选择/);
+  assert.match(body.result.personal_history, /待选择/);
+  assert.match(body.result.family_history, /待选择/);
+  assert.match(body.result.allergy_history, /待选择/);
+  assert.match(body.result.specialist_exam, /待查体/);
   assert.equal(body.result.diagnosis_summary, "");
   assert.equal(body.result.plan_summary, "");
+  assert.equal(body.result.template_name, "黑色素瘤入院病史候选模板");
+  assert.ok(body.result.review_items.length >= 12);
+  assert.ok(body.result.review_items.some((item) => item.choice_id === "melanoma_neurologic"));
+  assert.ok(body.result.review_items.some((item) => item.choice_id === "melanoma_exam_nodes"));
   assert.deepEqual(body.result.pending_fields, ["过敏史：待核对"]);
 });
