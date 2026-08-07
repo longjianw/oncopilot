@@ -66,6 +66,16 @@ export type AnalysisResult = AdmissionDraft & {
   template_name: string;
 };
 
+export type ReviewConfirmation = {
+  choice_id: string;
+  option_id: string;
+  prompt: string;
+  label: string;
+  section: keyof Omit<AdmissionDraft, "pending_fields">;
+  text: string;
+  detail: string;
+};
+
 const isString = (value: unknown): value is string => typeof value === "string";
 const isShortString = (value: unknown, max = 160) => isString(value) && value.trim().length > 0 && value.length <= max;
 const hasUniqueIds = (ids: string[]) => new Set(ids).size === ids.length;
@@ -125,3 +135,17 @@ export const hasUnsupportedDoctorJudgment = (extraction: FactExtraction, draft: 
   return (draft.diagnosis_summary.trim().length > 0 && diagnoses.length === 0)
     || (draft.plan_summary.trim().length > 0 && plans.length === 0);
 };
+
+export const isValidReviewConfirmations = (value: unknown): value is ReviewConfirmation[] => Array.isArray(value)
+  && value.length > 0
+  && value.length <= 40
+  && value.every((item) => item && typeof item === "object"
+    && isShortString((item as ReviewConfirmation).choice_id, 80)
+    && isShortString((item as ReviewConfirmation).option_id, 80)
+    && isShortString((item as ReviewConfirmation).prompt, 200)
+    && isShortString((item as ReviewConfirmation).label, 80)
+    && draftFields.includes((item as ReviewConfirmation).section)
+    && isString((item as ReviewConfirmation).text)
+    && (item as ReviewConfirmation).text.length <= 1000
+    && isString((item as ReviewConfirmation).detail)
+    && (item as ReviewConfirmation).detail.length <= 500);

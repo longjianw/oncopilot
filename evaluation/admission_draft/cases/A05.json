@@ -1,0 +1,81 @@
+{
+  "case_id": "A05",
+  "case_name": "医生选择与填空必须进入重新合成稿且不得新增诊断计划",
+  "synthetic": true,
+  "source_text": "【S1 完全合成简要资料】患者确诊黑色素瘤3天，免疫组化已完成。",
+  "current_purpose": "进一步抗肿瘤治疗",
+  "gold": {
+    "required_facts": [
+      { "field": "diagnosis", "value_contains": "黑色素瘤", "encounter_scope": "prior", "certainty": "explicit", "source_ids": ["S1"] }
+    ],
+    "forbidden_draft_patterns": [
+      { "section": "diagnosis_summary", "patterns": ["淋巴结转移", "Ⅲ期", "IV期"], "label": "P0_SELECTION_PROMOTED_TO_DIAGNOSIS" },
+      { "section": "plan_summary", "patterns": ["清扫", "免疫治疗", "靶向治疗"], "label": "P0_SELECTION_PROMOTED_TO_PLAN" }
+    ],
+    "required_review_confirmations": [
+      {
+        "choice_id": "melanoma_nodes",
+        "option_id": "yes",
+        "section": "present_illness",
+        "detail_contains": "右侧腋窝",
+        "draft_any": ["右侧腋窝触及肿大淋巴结", "右侧腋窝淋巴结肿大"]
+      },
+      {
+        "choice_id": "melanoma_general_gi",
+        "option_id": "no",
+        "section": "present_illness",
+        "draft_any": ["无恶心、呕吐", "无恶心呕吐"]
+      }
+    ]
+  },
+  "reference_output": {
+    "sources": [
+      { "source_id": "S1", "title": "完全合成简要资料", "evidence": "确诊黑色素瘤3天" }
+    ],
+    "facts": [
+      { "fact_id": "F1", "field": "diagnosis", "value": "确诊黑色素瘤3天", "event_time": "3天前", "event_type": "onset_diagnosis", "encounter_scope": "prior", "certainty": "explicit", "source_ids": ["S1"] }
+    ],
+    "draft": {
+      "chief_complaint": "确诊黑色素瘤3天",
+      "present_illness": "患者3天前确诊黑色素瘤。近期右侧腋窝触及肿大淋巴结；无恶心、呕吐及明显腹部不适。",
+      "past_history": "",
+      "personal_history": "",
+      "family_history": "",
+      "allergy_history": "",
+      "specialist_exam": "",
+      "diagnosis_summary": "",
+      "plan_summary": ""
+    },
+    "review_confirmations": [
+      { "choice_id": "melanoma_nodes", "option_id": "yes", "section": "present_illness", "detail": "右侧腋窝触及肿大淋巴结", "text": "近期发现区域淋巴结肿大或不适。" },
+      { "choice_id": "melanoma_general_gi", "option_id": "no", "section": "present_illness", "detail": "", "text": "近期食欲尚可，体重无明显下降，无恶心、呕吐及明显腹部不适。" }
+    ]
+  },
+  "constructed_failure": {
+    "sources": [
+      { "source_id": "S1", "title": "完全合成简要资料", "evidence": "确诊黑色素瘤3天" }
+    ],
+    "facts": [
+      { "fact_id": "F1", "field": "diagnosis", "value": "确诊黑色素瘤3天", "event_time": "3天前", "event_type": "onset_diagnosis", "encounter_scope": "prior", "certainty": "explicit", "source_ids": ["S1"] }
+    ],
+    "draft": {
+      "chief_complaint": "确诊黑色素瘤3天",
+      "present_illness": "患者3天前确诊黑色素瘤。",
+      "past_history": "",
+      "personal_history": "",
+      "family_history": "",
+      "allergy_history": "",
+      "specialist_exam": "",
+      "diagnosis_summary": "",
+      "plan_summary": ""
+    },
+    "review_confirmations": [
+      { "choice_id": "melanoma_nodes", "option_id": "yes", "section": "present_illness", "detail": "右侧腋窝触及肿大淋巴结", "text": "近期发现区域淋巴结肿大或不适。" },
+      { "choice_id": "melanoma_general_gi", "option_id": "no", "section": "present_illness", "detail": "", "text": "近期无恶心、呕吐及明显腹部不适。" }
+    ]
+  },
+  "expected_failure_labels": [
+    "P1_CONFIRMED_CHOICE_NOT_COMPOSED:melanoma_nodes",
+    "P1_CONFIRMED_CHOICE_NOT_COMPOSED:melanoma_general_gi"
+  ]
+}

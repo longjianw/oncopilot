@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 async function render() {
@@ -72,10 +73,72 @@ async function analyzeWithMockModel() {
   }
 }
 
+async function recomposeWithMockModel() {
+  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
+  workerUrl.searchParams.set("recompose-test", `${process.pid}-${Date.now()}`);
+  const { default: worker } = await import(workerUrl.href);
+  const candidate = {
+    chief_complaint: "确诊黑色素瘤3天",
+    present_illness: "患者3天前确诊黑色素瘤。近期右侧腋窝触及肿大淋巴结；无恶心、呕吐及明显腹部不适。",
+    past_history: "【待选择：既往疾病】",
+    personal_history: "【待选择：个人史】",
+    family_history: "【待选择：家族史】",
+    allergy_history: "【待选择：过敏史】",
+    specialist_exam: "【待查体：原发灶及区域淋巴结】",
+    diagnosis_summary: "模型不应新增的淋巴结转移诊断",
+    plan_summary: "模型不应新增的治疗计划",
+    pending_fields: [],
+  };
+  const originalFetch = globalThis.fetch;
+  let prompt = "";
+  globalThis.fetch = async (_url, init) => {
+    prompt = JSON.parse(init.body).input;
+    return new Response(JSON.stringify({ output_text: JSON.stringify(candidate) }), { status: 200 });
+  };
+  try {
+    const draft = { ...candidate, present_illness: "患者3天前经病理检查确诊黑色素瘤，免疫组化具体结果待核对。", diagnosis_summary: "", plan_summary: "", pending_fields: ["病理：待核对"] };
+    const response = await worker.fetch(
+      new Request("http://localhost/api/recompose", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({
+        draft,
+        facts: [{ fact_id: "F1", event_type: "onset_diagnosis", certainty: "explicit" }],
+        template_name: "黑色素瘤入院病史候选模板",
+        confirmations: [
+          { choice_id: "melanoma_nodes", option_id: "yes", prompt: "区域淋巴结有肿大或不适吗？", label: "有", section: "present_illness", text: "近期发现区域淋巴结肿大或不适。", detail: "右侧腋窝触及肿大淋巴结" },
+          { choice_id: "melanoma_general_gi", option_id: "no", prompt: "食欲、体重或消化道症状有变化吗？", label: "无", section: "present_illness", text: "无恶心、呕吐及明显腹部不适。", detail: "" },
+        ],
+      }) }),
+      { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) }, ARK_CODING_API_KEY: "synthetic-test-key" },
+      { waitUntil() {}, passThroughOnException() {} },
+    );
+    return { response, prompt };
+  } finally { globalThis.fetch = originalFetch; }
+}
+
+async function templateChatWithMockModel() {
+  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
+  workerUrl.searchParams.set("chat-test", `${process.pid}-${Date.now()}`);
+  const { default: worker } = await import(workerUrl.href);
+  const originalFetch = globalThis.fetch;
+  let prompt = "";
+  globalThis.fetch = async (_url, init) => {
+    prompt = JSON.parse(init.body).input;
+    return new Response(JSON.stringify({ output_text: "建议核对具体淋巴引流区、部位、大小、质地、活动度及压痛；这些记录不能替代诊断。" }), { status: 200 });
+  };
+  try {
+    const response = await worker.fetch(
+      new Request("http://localhost/api/template-chat", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message: "区域淋巴结要记录什么？", history: [], template_name: "黑色素瘤入院病史候选模板", item_context: "区域淋巴结实际查体" }) }),
+      { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) }, ARK_CODING_API_KEY: "synthetic-test-key" },
+      { waitUntil() {}, passThroughOnException() {} },
+    );
+    return { response, prompt };
+  } finally { globalThis.fetch = originalFetch; }
+}
+
 test("renders the single-entry admission draft package workflow", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   const html = await response.text();
+  const pageSource = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   assert.match(html, /OncoPilot/);
   assert.match(html, /肿瘤入院记录草稿助手/);
   assert.match(html, /资料再少/);
@@ -93,6 +156,7 @@ test("renders the single-entry admission draft package workflow", async () => {
   assert.match(html, /先整理已知事实/);
   assert.match(html, /再给候选选项/);
   assert.match(html, /只有你点击确认后才加入草稿/);
+  assert.match(pageSource, /fetch\("\/api\/template-chat\/"/);
   assert.doesNotMatch(html, /进入管床/);
   assert.doesNotMatch(html, /合成患者 A02/);
   assert.doesNotMatch(html, /codex-preview/);
@@ -126,4 +190,26 @@ test("extracts facts first and adds melanoma scaffolds plus guided choices", asy
   assert.ok(body.result.review_items.some((item) => item.choice_id === "melanoma_neurologic"));
   assert.ok(body.result.review_items.some((item) => item.choice_id === "melanoma_exam_nodes"));
   assert.deepEqual(body.result.pending_fields, ["过敏史：待核对"]);
+});
+
+test("recomposes confirmed choices and free text without adding diagnosis or plan", async () => {
+  const { response, prompt } = await recomposeWithMockModel();
+  assert.equal(response.status, 200);
+  assert.match(prompt, /右侧腋窝触及肿大淋巴结/);
+  assert.match(prompt, /确认项是医生核对后的新事实/);
+  const body = await response.json();
+  assert.match(body.result.present_illness, /右侧腋窝/);
+  assert.match(body.result.present_illness, /无恶心、呕吐/);
+  assert.equal(body.result.diagnosis_summary, "");
+  assert.equal(body.result.plan_summary, "");
+  assert.deepEqual(body.result.pending_fields, ["病理：待核对"]);
+});
+
+test("template chat explains documentation fields without replacing clinical judgment", async () => {
+  const { response, prompt } = await templateChatWithMockModel();
+  assert.equal(response.status, 200);
+  assert.match(prompt, /不能替患者回答有或无/);
+  assert.match(prompt, /不能推荐检查、药物、剂量、治疗/);
+  const body = await response.json();
+  assert.match(body.answer, /部位、大小、质地、活动度及压痛/);
 });

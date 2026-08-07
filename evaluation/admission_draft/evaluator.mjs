@@ -57,6 +57,22 @@ export function evaluateAdmissionCase(testCase, candidate) {
     if (!reviewIds.has(choiceId)) errors.push(`P1_REVIEW_CHOICE_MISSING:${choiceId}`);
   }
 
+  const confirmations = candidate.review_confirmations || [];
+  for (const requirement of testCase.gold.required_review_confirmations || []) {
+    const confirmation = confirmations.find((item) => item.choice_id === requirement.choice_id
+      && item.option_id === requirement.option_id
+      && item.section === requirement.section
+      && (!requirement.detail_contains || normalize(item.detail).includes(normalize(requirement.detail_contains))));
+    if (!confirmation) {
+      errors.push(`P1_REVIEW_CONFIRMATION_MISSING:${requirement.choice_id}`);
+      continue;
+    }
+    const sectionText = String(candidate.draft?.[requirement.section] || "");
+    if (!(requirement.draft_any || []).some((text) => normalize(sectionText).includes(normalize(text)))) {
+      errors.push(`P1_CONFIRMED_CHOICE_NOT_COMPOSED:${requirement.choice_id}`);
+    }
+  }
+
   const uniqueErrors = [...new Set(errors)];
   const p0 = uniqueErrors.filter((error) => error.startsWith("P0_"));
   return { case_id: testCase.case_id, passed: uniqueErrors.length === 0, p0, errors: uniqueErrors };

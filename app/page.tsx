@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, useState } from "react";
+import { ChangeEvent, FormEvent, useState } from "react";
 import Image from "next/image";
 
 type Stage = "input" | "result";
@@ -9,6 +9,8 @@ type DraftField = "chief_complaint" | "present_illness" | "past_history" | "pers
 type Fact = { fact_id: string; field: string; value: string; event_time: string; event_type: string; encounter_scope: "prior" | "current" | "unclear"; certainty: "explicit" | "doctor_confirmed" | "uncertain" | "pending"; source_ids: string[] };
 type ReviewOption = { option_id: string; label: string; text: string; tone: "positive" | "negative" | "neutral" };
 type ReviewItem = { choice_id: string; group: "发病与确诊" | "症状核对" | "其他病史" | "专科查体"; section: DraftField; prompt: string; help: string; options: ReviewOption[] };
+type ReviewConfirmation = { choice_id: string; option_id: string; prompt: string; label: string; section: DraftField; text: string; detail: string };
+type ChatEntry = { role: "user" | "assistant"; content: string };
 type AnalysisResult = Record<DraftField, string> & { pending_fields: string[]; sources: Array<{ source_id: string; title: string; evidence: string }>; facts: Fact[]; review_items: ReviewItem[]; template_mode: boolean; template_name: string };
 type UploadItem = { id: string; name: string; preview?: string; status: UploadStatus; error?: string };
 type PreparedInput = { name: string; file: File; preview?: string };
@@ -34,6 +36,14 @@ const sectionLabels: Array<{ field: DraftField; label: string; hint: string; lar
 
 const syntheticSample = `【S1 完全合成简要资料】
 患者已确诊黑色素瘤3天，免疫组化已完成，具体结果未提供。其他检查、既往病史、近期症状及专科查体均未提供。`;
+
+const renderConfirmedText = (option: ReviewOption, detail: string) => {
+  if (!option.text) return "";
+  const cleanDetail = detail.trim();
+  if (!cleanDetail) return option.text;
+  if (/【[^】]+】/.test(option.text)) return option.text.replace(/【[^】]+】/, cleanDetail);
+  return `${option.text} 补充记录：${cleanDetail}。`;
+};
 
 const isHeic = (file: File) => file.type === "image/heic" || file.type === "image/heif" || /\.hei[cf]$/i.test(file.name);
 const isPdf = (file: File) => file.type === "application/pdf" || /\.pdf$/i.test(file.name);
@@ -103,24 +113,107 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [uploads, setUploads] = useState<UploadItem[]>([]);
   const [selectedChoices, setSelectedChoices] = useState<Record<string, string>>({});
-  const [appliedChoiceText, setAppliedChoiceText] = useState<Record<string, string>>({});
+  const [choiceDetails, setChoiceDetails] = useState<Record<string, string>>({});
+  const [, setAppliedChoiceText] = useState<Record<string, string>>({});
+  const [recomposeLoading, setRecomposeLoading] = useState(false);
+  const [recomposeNotice, setRecomposeNotice] = useState("");
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatContext, setChatContext] = useState("当前模板整体");
+  const [chatMessages, setChatMessages] = useState<ChatEntry[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
   const busy = uploads.some((item) => item.status === "preparing" || item.status === "recognizing");
 
   const updateUpload = (id: string, patch: Partial<UploadItem>) => setUploads((items) => items.map((item) => item.id === id ? { ...item, ...patch } : item));
   const updateDraft = (field: DraftField, value: string) => setDraft((current) => current ? { ...current, [field]: value } : current);
-  const selectReviewOption = (item: ReviewItem, selected: ReviewOption) => {
-    const previousText = appliedChoiceText[item.choice_id] || "";
-    setDraft((current) => {
-      if (!current) return current;
-      let sectionText = current[item.section];
-      if (previousText && sectionText.includes(previousText)) sectionText = sectionText.replace(previousText, "").replace(/\s{2,}/g, " ").trim();
-      if (selected.text) sectionText = [sectionText.trim(), selected.text].filter(Boolean).join(" ");
-      return { ...current, [item.section]: sectionText };
+  const applyReviewText = (item: ReviewItem, nextText: string) => {
+    setAppliedChoiceText((applied) => {
+      const previousText = applied[item.choice_id] || "";
+      setDraft((current) => {
+        if (!current) return current;
+        let sectionText = current[item.section];
+        if (previousText && sectionText.includes(previousText)) sectionText = sectionText.replace(previousText, "").replace(/\s{2,}/g, " ").trim();
+        if (nextText) sectionText = [sectionText.trim(), nextText].filter(Boolean).join(" ");
+        return { ...current, [item.section]: sectionText };
+      });
+      return { ...applied, [item.choice_id]: nextText };
     });
+    setRecomposeNotice("选择已写入对应模块；完成几项后可让 AI 重新整理成连贯草稿。");
+  };
+  const selectReviewOption = (item: ReviewItem, selected: ReviewOption) => {
     setSelectedChoices((current) => ({ ...current, [item.choice_id]: selected.option_id }));
-    setAppliedChoiceText((current) => ({ ...current, [item.choice_id]: selected.text }));
+    applyReviewText(item, renderConfirmedText(selected, choiceDetails[item.choice_id] || ""));
+  };
+  const updateChoiceDetail = (item: ReviewItem, detail: string) => {
+    setChoiceDetails((current) => ({ ...current, [item.choice_id]: detail }));
+    const optionId = selectedChoices[item.choice_id];
+    const selected = item.options.find((option) => option.option_id === optionId);
+    if (selected) applyReviewText(item, renderConfirmedText(selected, detail));
+  };
+
+  const confirmations = (): ReviewConfirmation[] => {
+    if (!draft) return [];
+    return draft.review_items.flatMap((item) => {
+      const option = item.options.find((candidate) => candidate.option_id === selectedChoices[item.choice_id]);
+      if (!option?.text) return [];
+      return [{
+        choice_id: item.choice_id,
+        option_id: option.option_id,
+        prompt: item.prompt,
+        label: option.label,
+        section: item.section,
+        text: option.text,
+        detail: (choiceDetails[item.choice_id] || "").trim(),
+      }];
+    });
+  };
+
+  const recomposeDraft = async () => {
+    if (!draft || recomposeLoading) return;
+    const selected = confirmations();
+    if (!selected.length) { setRecomposeNotice("请先至少选择一项“有 / 无 / 已查”等有效内容。"); return; }
+    setRecomposeLoading(true); setRecomposeNotice("");
+    try {
+      const response = await fetch("/api/recompose", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ draft, confirmations: selected, facts: draft.facts, template_name: draft.template_name }),
+      });
+      const payload = await response.json() as { result?: Omit<AnalysisResult, "sources" | "facts" | "review_items" | "template_mode" | "template_name">; error?: string };
+      if (!response.ok || !payload.result) throw new Error(payload.error || "AI重新整理失败，请稍后重试。");
+      setDraft((current) => current ? { ...current, ...payload.result } : current);
+      setAppliedChoiceText({});
+      setRecomposeNotice("已根据当前选择和填空重新整理；未选择项目仍保留为待完成项。");
+    } catch (caught) { setRecomposeNotice(caught instanceof Error ? caught.message : "AI重新整理失败，请稍后重试。"); }
+    finally { setRecomposeLoading(false); }
+  };
+
+  const openTemplateChat = (item?: ReviewItem) => {
+    const context = item ? `${item.prompt}；提示：${item.help}` : "当前模板整体与未完成核对项";
+    setChatContext(context); setChatOpen(true);
+    if (item) setChatInput(`“${item.prompt}”这一项具体应该核对和记录哪些内容？`);
+  };
+
+  const sendChat = async (event: FormEvent) => {
+    event.preventDefault();
+    const message = chatInput.trim();
+    if (!draft || !message || chatLoading) return;
+    const nextHistory: ChatEntry[] = [...chatMessages, { role: "user", content: message }];
+    setChatMessages(nextHistory); setChatInput(""); setChatLoading(true);
+    try {
+      // Sites currently requires the trailing slash for this newly added route.
+      const response = await fetch("/api/template-chat/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message, history: chatMessages.slice(-6), template_name: draft.template_name, item_context: chatContext }),
+      });
+      const payload = await response.json() as { answer?: string; error?: string };
+      if (!response.ok || !payload.answer) throw new Error(payload.error || "AI暂时没有回答，请重试。")
+      setChatMessages((current) => [...current, { role: "assistant", content: payload.answer! }]);
+    } catch (caught) { setChatMessages((current) => [...current, { role: "assistant", content: caught instanceof Error ? caught.message : "AI暂时没有回答，请重试。" }]); }
+    finally { setChatLoading(false); }
   };
 
   const analyze = async () => {
@@ -179,7 +272,7 @@ export default function Home() {
     setSourceText(await file.text()); setError("");
   };
 
-  const reset = () => { setStage("input"); setSourceText(""); setCurrentPurpose(""); setDraft(null); setUploads([]); setSelectedChoices({}); setAppliedChoiceText({}); setCopied(false); setError(""); };
+  const reset = () => { setStage("input"); setSourceText(""); setCurrentPurpose(""); setDraft(null); setUploads([]); setSelectedChoices({}); setChoiceDetails({}); setAppliedChoiceText({}); setRecomposeNotice(""); setChatOpen(false); setChatContext("当前模板整体"); setChatMessages([]); setChatInput(""); setCopied(false); setError(""); };
   const copyDraft = async () => {
     if (!draft) return;
     const text = sectionLabels.map(({ field, label }) => draft[field].trim() ? `${label}：\n${draft[field].trim()}` : "").filter(Boolean).join("\n\n");
@@ -212,8 +305,12 @@ export default function Home() {
       <div className="result-title"><div><span className="success-mark">✓</span><span><small>草稿骨架与候选项已生成</small><h1>先点选补全，再微调文字</h1></span></div><button type="button" className="copy-all" onClick={copyDraft}>{copied ? "已复制当前草稿" : unresolvedMarkers ? "复制当前草稿（含待完成标记）" : "复制当前草稿"}</button></div>
       <div className="safety-banner"><strong>{draft.template_name}</strong><span>方括号是待完成项；下面的候选内容默认不算事实，只有点击后才加入对应草稿。</span></div>
       {draft.review_items.length > 0 && <section className="guided-review">
-        <div className="guided-heading"><div><span>快速补全</span><h2>把问诊和查体改成选择题</h2><p>已选择 {selectedCount}/{draft.review_items.length} 项。阳性结果仍可在草稿中补具体时间、部位和程度。</p></div><div className="choice-legend"><span className="positive">有 / 异常</span><span className="negative">无 / 正常</span><span>未问 / 未查</span></div></div>
-        <div className="review-groups">{reviewGroups.map(({ group, items }) => <section className="review-group" key={group}><h3>{group}</h3><div className="review-items">{items.map((item) => <div className="review-item" key={item.choice_id}><div className="review-question"><strong>{item.prompt}</strong><small>{item.help}</small></div><div className="review-options">{item.options.map((option) => <button type="button" key={option.option_id} className={`${option.tone} ${selectedChoices[item.choice_id] === option.option_id ? "selected" : ""}`} onClick={() => selectReviewOption(item, option)}>{option.label}</button>)}</div></div>)}</div></section>)}</div>
+        <div className="guided-heading"><div><span>快速补全</span><h2>先选择，再补细节，最后重新成稿</h2><p>已选择 {selectedCount}/{draft.review_items.length} 项。每次点击会先写入对应模块；完成几项后可一键整理成连贯文字。</p></div><div className="guided-tools"><div className="choice-legend"><span className="positive">有 / 异常</span><span className="negative">无 / 正常</span><span>未问 / 未查</span></div><button type="button" className="ask-ai" onClick={() => openTemplateChat()}>问 AI 这个模板</button></div></div>
+        <div className="review-groups">{reviewGroups.map(({ group, items }) => <section className="review-group" key={group}><h3>{group}</h3><div className="review-items">{items.map((item) => {
+          const selectedOption = item.options.find((option) => option.option_id === selectedChoices[item.choice_id]);
+          return <div className={`review-item ${selectedOption ? "answered" : ""}`} key={item.choice_id}><div className="review-question"><strong>{item.prompt}</strong><small>{item.help}</small><button type="button" onClick={() => openTemplateChat(item)}>这项怎么问？</button></div><div><div className="review-options">{item.options.map((option) => <button type="button" key={option.option_id} className={`${option.tone} ${selectedChoices[item.choice_id] === option.option_id ? "selected" : ""}`} onClick={() => selectReviewOption(item, option)}>{option.label}</button>)}</div>{selectedOption && selectedOption.text && <label className="detail-fill"><span>补充细节（可选）</span><input value={choiceDetails[item.choice_id] || ""} onChange={(event) => updateChoiceDetail(item, event.target.value)} maxLength={500} placeholder="例如：时间、具体部位、大小、程度、持续时间……" /><small>已加入：{sectionLabels.find(({ field }) => field === item.section)?.label}</small></label>}</div></div>;
+        })}</div></section>)}</div>
+        <div className="recompose-bar"><div><strong>选择和填空完成后</strong><span>让 AI 去重、调整顺序，并重新组织主诉、现病史和其他模块。</span>{recomposeNotice && <small>{recomposeNotice}</small>}</div><button type="button" disabled={recomposeLoading || confirmations().length === 0} onClick={recomposeDraft}>{recomposeLoading ? "正在重新整理…" : "一键重新整理草稿"}</button></div>
       </section>}
       <div className="draft-grid">
         {sectionLabels.map(({ field, label, hint, large }) => <section className={`draft-section ${large ? "wide" : ""} ${field === "diagnosis_summary" || field === "plan_summary" ? "doctor-only" : ""}`} key={field}>
@@ -224,6 +321,8 @@ export default function Home() {
       {draft.pending_fields.length > 0 && <section className="follow-up-card pending-card"><div className="section-heading"><span>待核对</span><h2>这些缺口可能影响草稿落笔</h2></div><div className="pending-list">{draft.pending_fields.map((item) => <span key={item}>{item}</span>)}</div></section>}
       <details className="source-details"><summary>查看结构化事实与资料来源（{draft.facts.length} 条事实）</summary><div className="fact-list">{draft.facts.map((fact) => <div key={fact.fact_id}><span className={`certainty ${fact.certainty}`}>{fact.certainty === "uncertain" ? "不确定" : fact.certainty === "doctor_confirmed" ? "医生明确" : fact.certainty === "pending" ? "待核对" : "资料明确"}</span><p><strong>{fact.value}</strong><small>{fact.event_time} · {fact.encounter_scope === "current" ? "本次" : fact.encounter_scope === "prior" ? "既往" : "归属待核对"} · 来源 {fact.source_ids.join("、")}</small></p></div>)}</div><div className="source-list">{draft.sources.map((source) => <div key={source.source_id}><b>{source.source_id}</b><span><strong>{source.title}</strong><small>{source.evidence}</small></span></div>)}</div></details>
       <div className="result-actions"><button type="button" className="secondary-action" onClick={() => setStage("input")}>返回补充原始资料</button><button type="button" className="primary-action compact" onClick={reset}>整理另一名患者</button></div>
+      <button type="button" className="floating-chat" onClick={() => openTemplateChat()}>问 AI · 文书核对</button>
+      {chatOpen && <aside className="chat-drawer" aria-label="AI文书核对窗口"><div className="chat-header"><div><strong>问 AI · 文书核对</strong><small>{chatContext}</small></div><button type="button" onClick={() => setChatOpen(false)} aria-label="关闭聊天">×</button></div><div className="chat-boundary">可以问“这项要核对什么、怎样记录”；AI不会替患者回答，也不做诊断和治疗建议。</div><div className="chat-messages">{chatMessages.length === 0 ? <div className="chat-empty"><p>例如：</p><button type="button" onClick={() => setChatInput("区域淋巴结这一项，通常要记录哪些部位和查体特征？")}>区域淋巴结要记什么？</button><button type="button" onClick={() => setChatInput("一个阳性症状需要补充哪些时间和程度信息？")}>阳性症状怎么补细节？</button></div> : chatMessages.map((message, index) => <div className={message.role} key={`${message.role}-${index}`}>{message.content}</div>)}{chatLoading && <div className="assistant loading">正在整理文书核对要点…</div>}</div><form onSubmit={sendChat}><textarea value={chatInput} onChange={(event) => setChatInput(event.target.value)} maxLength={1200} placeholder="只输入完全合成或严格脱敏内容……" /><button type="submit" disabled={!chatInput.trim() || chatLoading}>发送</button></form></aside>}
     </section>}
   </main>;
 }
