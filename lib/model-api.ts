@@ -26,12 +26,14 @@ export const parseModelJson = (text: string) => {
   }
 };
 
-export async function requestModel(baseUrl: string, apiKey: string, model: string, prompt: string) {
+type ModelRequestOptions = { maxOutputTokens?: number; timeoutMs?: number };
+
+export async function requestModel(baseUrl: string, apiKey: string, model: string, prompt: string, options: ModelRequestOptions = {}) {
   const upstream = await fetch(`${baseUrl}/responses`, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model, input: prompt }),
-    signal: AbortSignal.timeout(75000),
+    body: JSON.stringify({ model, input: prompt, ...(options.maxOutputTokens ? { max_output_tokens: options.maxOutputTokens } : {}) }),
+    signal: AbortSignal.timeout(options.timeoutMs || 75000),
   });
   const raw = await upstream.text();
   if (!upstream.ok) throw new Error(`上游模型请求失败：${upstream.status}`);

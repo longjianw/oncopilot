@@ -1,16 +1,17 @@
 "use client";
 
-import { ChangeEvent, FormEvent, useState } from "react";
+import { ChangeEvent, FormEvent, ReactNode, useEffect, useState } from "react";
 import Image from "next/image";
 
 type Stage = "input" | "result";
 type UploadStatus = "preparing" | "recognizing" | "done" | "error";
 type DraftField = "chief_complaint" | "present_illness" | "past_history" | "personal_history" | "family_history" | "allergy_history" | "specialist_exam" | "diagnosis_summary" | "plan_summary";
 type Fact = { fact_id: string; field: string; value: string; event_time: string; event_type: string; encounter_scope: "prior" | "current" | "unclear"; certainty: "explicit" | "doctor_confirmed" | "uncertain" | "pending"; source_ids: string[] };
-type ReviewOption = { option_id: string; label: string; text: string; tone: "positive" | "negative" | "neutral" };
+type ReviewOption = { option_id: string; label: string; text: string; tone: "positive" | "negative" | "neutral"; detail_prompt?: string };
 type ReviewItem = { choice_id: string; group: "发病与确诊" | "症状核对" | "其他病史" | "专科查体"; section: DraftField; prompt: string; help: string; options: ReviewOption[] };
 type ReviewConfirmation = { choice_id: string; option_id: string; prompt: string; label: string; section: DraftField; text: string; detail: string };
-type ChatEntry = { role: "user" | "assistant"; content: string };
+type ChatModel = "deepseek-v4-flash" | "deepseek-v4-pro";
+type ChatEntry = { role: "user" | "assistant"; content: string; modelLabel?: string; elapsedSeconds?: number };
 type AnalysisResult = Record<DraftField, string> & { pending_fields: string[]; sources: Array<{ source_id: string; title: string; evidence: string }>; facts: Fact[]; review_items: ReviewItem[]; template_mode: boolean; template_name: string };
 type UploadItem = { id: string; name: string; preview?: string; status: UploadStatus; error?: string };
 type PreparedInput = { name: string; file: File; preview?: string };
@@ -22,17 +23,30 @@ const MAX_EDGE = 1800;
 const MAX_SOURCE_CHARS = 32_000;
 const RECOGNITION_CONCURRENCY = 3;
 
-const sectionLabels: Array<{ field: DraftField; label: string; hint: string; large?: boolean }> = [
-  { field: "chief_complaint", label: "主诉", hint: "疾病或主要症状 + 时间 + 本次目的" },
-  { field: "present_illness", label: "现病史", hint: "按时间线整理确诊、既往治疗、进展证据与本次情况", large: true },
-  { field: "past_history", label: "既往史", hint: "仅写资料中已确认的既往疾病和相关情况" },
-  { field: "personal_history", label: "个人史", hint: "未提供时留空，不自动写无特殊" },
-  { field: "family_history", label: "家族史", hint: "未提供时留空，不自动写否认" },
-  { field: "allergy_history", label: "过敏史", hint: "仅写已确认过敏或已确认无过敏" },
-  { field: "specialist_exam", label: "专科体格检查", hint: "只整理医生实际查体所见；未查体不写正常", large: true },
-  { field: "diagnosis_summary", label: "诊断整理", hint: "只整理医生已明确给出的判断，不由 AI 诊断" },
-  { field: "plan_summary", label: "计划整理", hint: "只整理医生已明确给出的计划，不新增治疗建议", large: true },
+const sectionLabels: Array<{ field: DraftField; label: string; hint: string; placeholder: string; large?: boolean }> = [
+  { field: "chief_complaint", label: "主诉", hint: "疾病或主要症状 + 时间 + 本次目的", placeholder: "可在上方点选候选项，也可直接输入" },
+  { field: "present_illness", label: "现病史", hint: "按时间线整理确诊、既往治疗、进展证据与本次情况", placeholder: "可在上方点选候选项，也可直接输入", large: true },
+  { field: "past_history", label: "既往史", hint: "仅写资料中已确认的既往疾病和相关情况", placeholder: "可在上方点选候选项，也可直接输入" },
+  { field: "personal_history", label: "个人史", hint: "未提供时留空，不自动写无特殊", placeholder: "可在上方点选候选项，也可直接输入" },
+  { field: "family_history", label: "家族史", hint: "未提供时留空，不自动写否认", placeholder: "可在上方点选候选项，也可直接输入" },
+  { field: "allergy_history", label: "过敏史", hint: "仅写已确认过敏或已确认无过敏", placeholder: "可在上方点选候选项，也可直接输入" },
+  { field: "specialist_exam", label: "专科体格检查", hint: "只写医生实际查体/评分；影像异常不能代替触诊所见", placeholder: "按病种核对原发部位、术区、区域淋巴结、ECOG PS；存在疼痛时记录NRS", large: true },
+  { field: "diagnosis_summary", label: "诊断整理", hint: "只整理医生已明确给出的判断，不由 AI 诊断", placeholder: "填写医生已明确判断；可按“主要诊断｜病理/分期依据｜并存疾病待确认”整理" },
+  { field: "plan_summary", label: "计划整理", hint: "只整理医生已明确给出的计划，不新增治疗建议", placeholder: "填写医生已明确计划；可按“本次目标｜已决定检查｜已决定治疗/观察｜复评节点”整理", large: true },
 ];
+
+const chatModelOptions: Array<{ id: ChatModel; label: string; note: string }> = [
+  { id: "deepseek-v4-flash", label: "快速 · V4 Flash", note: "更快，适合问字段" },
+  { id: "deepseek-v4-pro", label: "深入 · V4 Pro", note: "更强，可能等待更久" },
+];
+
+const renderInlineMarkdown = (text: string): ReactNode[] => text.split(/(\*\*[^*]+\*\*)/g).filter(Boolean).map((part, index) =>
+  part.startsWith("**") && part.endsWith("**") ? <strong key={index}>{part.slice(2, -2)}</strong> : <span key={index}>{part}</span>);
+
+const renderChatContent = (content: string) => content.split("\n").filter((line) => line.trim()).map((line, index) => {
+  const cleanLine = line.replace(/^\s*(?:[-*•]|\d+[.、])\s*/, "");
+  return <p key={index}>{renderInlineMarkdown(cleanLine)}</p>;
+});
 
 const syntheticSample = `【S1 完全合成简要资料】
 患者已确诊黑色素瘤3天，免疫组化已完成，具体结果未提供。其他检查、既往病史、近期症状及专科查体均未提供。`;
@@ -122,9 +136,17 @@ export default function Home() {
   const [chatMessages, setChatMessages] = useState<ChatEntry[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
+  const [chatModel, setChatModel] = useState<ChatModel>("deepseek-v4-flash");
+  const [chatElapsed, setChatElapsed] = useState(0);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
   const busy = uploads.some((item) => item.status === "preparing" || item.status === "recognizing");
+
+  useEffect(() => {
+    if (!chatLoading) return;
+    const timer = window.setInterval(() => setChatElapsed((seconds) => seconds + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [chatLoading]);
 
   const updateUpload = (id: string, patch: Partial<UploadItem>) => setUploads((items) => items.map((item) => item.id === id ? { ...item, ...patch } : item));
   const updateDraft = (field: DraftField, value: string) => setDraft((current) => current ? { ...current, [field]: value } : current);
@@ -201,17 +223,20 @@ export default function Home() {
     const message = chatInput.trim();
     if (!draft || !message || chatLoading) return;
     const nextHistory: ChatEntry[] = [...chatMessages, { role: "user", content: message }];
-    setChatMessages(nextHistory); setChatInput(""); setChatLoading(true);
+    const selectedModel = chatModel;
+    const startedAt = Date.now();
+    setChatMessages(nextHistory); setChatInput(""); setChatElapsed(0); setChatLoading(true);
     try {
       // Sites currently requires the trailing slash for this newly added route.
       const response = await fetch("/api/template-chat/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message, history: chatMessages.slice(-6), template_name: draft.template_name, item_context: chatContext }),
+        body: JSON.stringify({ message, history: chatMessages.slice(-6), template_name: draft.template_name, item_context: chatContext, model: selectedModel }),
       });
-      const payload = await response.json() as { answer?: string; error?: string };
+      const payload = await response.json() as { answer?: string; error?: string; model?: ChatModel };
       if (!response.ok || !payload.answer) throw new Error(payload.error || "AI暂时没有回答，请重试。")
-      setChatMessages((current) => [...current, { role: "assistant", content: payload.answer! }]);
+      const modelLabel = chatModelOptions.find((option) => option.id === (payload.model || selectedModel))?.label || selectedModel;
+      setChatMessages((current) => [...current, { role: "assistant", content: payload.answer!, modelLabel, elapsedSeconds: Math.max(1, Math.round((Date.now() - startedAt) / 1000)) }]);
     } catch (caught) { setChatMessages((current) => [...current, { role: "assistant", content: caught instanceof Error ? caught.message : "AI暂时没有回答，请重试。" }]); }
     finally { setChatLoading(false); }
   };
@@ -272,7 +297,7 @@ export default function Home() {
     setSourceText(await file.text()); setError("");
   };
 
-  const reset = () => { setStage("input"); setSourceText(""); setCurrentPurpose(""); setDraft(null); setUploads([]); setSelectedChoices({}); setChoiceDetails({}); setAppliedChoiceText({}); setRecomposeNotice(""); setChatOpen(false); setChatContext("当前模板整体"); setChatMessages([]); setChatInput(""); setCopied(false); setError(""); };
+  const reset = () => { setStage("input"); setSourceText(""); setCurrentPurpose(""); setDraft(null); setUploads([]); setSelectedChoices({}); setChoiceDetails({}); setAppliedChoiceText({}); setRecomposeNotice(""); setChatOpen(false); setChatContext("当前模板整体"); setChatMessages([]); setChatInput(""); setChatModel("deepseek-v4-flash"); setChatElapsed(0); setCopied(false); setError(""); };
   const copyDraft = async () => {
     if (!draft) return;
     const text = sectionLabels.map(({ field, label }) => draft[field].trim() ? `${label}：\n${draft[field].trim()}` : "").filter(Boolean).join("\n\n");
@@ -308,21 +333,21 @@ export default function Home() {
         <div className="guided-heading"><div><span>快速补全</span><h2>先选择，再补细节，最后重新成稿</h2><p>已选择 {selectedCount}/{draft.review_items.length} 项。每次点击会先写入对应模块；完成几项后可一键整理成连贯文字。</p></div><div className="guided-tools"><div className="choice-legend"><span className="positive">有 / 异常</span><span className="negative">无 / 正常</span><span>未问 / 未查</span></div><button type="button" className="ask-ai" onClick={() => openTemplateChat()}>问 AI 这个模板</button></div></div>
         <div className="review-groups">{reviewGroups.map(({ group, items }) => <section className="review-group" key={group}><h3>{group}</h3><div className="review-items">{items.map((item) => {
           const selectedOption = item.options.find((option) => option.option_id === selectedChoices[item.choice_id]);
-          return <div className={`review-item ${selectedOption ? "answered" : ""}`} key={item.choice_id}><div className="review-question"><strong>{item.prompt}</strong><small>{item.help}</small><button type="button" onClick={() => openTemplateChat(item)}>这项怎么问？</button></div><div><div className="review-options">{item.options.map((option) => <button type="button" key={option.option_id} className={`${option.tone} ${selectedChoices[item.choice_id] === option.option_id ? "selected" : ""}`} onClick={() => selectReviewOption(item, option)}>{option.label}</button>)}</div>{selectedOption && selectedOption.text && <label className="detail-fill"><span>补充细节（可选）</span><input value={choiceDetails[item.choice_id] || ""} onChange={(event) => updateChoiceDetail(item, event.target.value)} maxLength={500} placeholder="例如：时间、具体部位、大小、程度、持续时间……" /><small>已加入：{sectionLabels.find(({ field }) => field === item.section)?.label}</small></label>}</div></div>;
+          return <div className={`review-item ${selectedOption ? "answered" : ""}`} key={item.choice_id}><div className="review-question"><strong>{item.prompt}</strong><small>{item.help}</small><button type="button" onClick={() => openTemplateChat(item)}>这项怎么问？</button></div><div><div className="review-options">{item.options.map((option) => <button type="button" key={option.option_id} className={`${option.tone} ${selectedChoices[item.choice_id] === option.option_id ? "selected" : ""}`} onClick={() => selectReviewOption(item, option)}>{option.label}</button>)}</div>{selectedOption?.detail_prompt && <label className="detail-fill"><span>补充这项（可选）</span><input value={choiceDetails[item.choice_id] || ""} onChange={(event) => updateChoiceDetail(item, event.target.value)} maxLength={500} placeholder={selectedOption.detail_prompt} /><small>已加入：{sectionLabels.find(({ field }) => field === item.section)?.label}</small></label>}</div></div>;
         })}</div></section>)}</div>
         <div className="recompose-bar"><div><strong>选择和填空完成后</strong><span>让 AI 去重、调整顺序，并重新组织主诉、现病史和其他模块。</span>{recomposeNotice && <small>{recomposeNotice}</small>}</div><button type="button" disabled={recomposeLoading || confirmations().length === 0} onClick={recomposeDraft}>{recomposeLoading ? "正在重新整理…" : "一键重新整理草稿"}</button></div>
       </section>}
       <div className="draft-grid">
-        {sectionLabels.map(({ field, label, hint, large }) => <section className={`draft-section ${large ? "wide" : ""} ${field === "diagnosis_summary" || field === "plan_summary" ? "doctor-only" : ""}`} key={field}>
+        {sectionLabels.map(({ field, label, hint, placeholder, large }) => <section className={`draft-section ${large ? "wide" : ""} ${field === "diagnosis_summary" || field === "plan_summary" ? "doctor-only" : ""}`} key={field}>
           <div><label htmlFor={field}>{label}</label><small>{hint}</small></div>
-          <textarea id={field} value={draft[field]} onChange={(event) => updateDraft(field, event.target.value)} placeholder="可在上方点选候选项，也可直接输入" rows={large ? 7 : 4} />
+          <textarea id={field} value={draft[field]} onChange={(event) => updateDraft(field, event.target.value)} placeholder={placeholder} rows={large ? 7 : 4} />
         </section>)}
       </div>
       {draft.pending_fields.length > 0 && <section className="follow-up-card pending-card"><div className="section-heading"><span>待核对</span><h2>这些缺口可能影响草稿落笔</h2></div><div className="pending-list">{draft.pending_fields.map((item) => <span key={item}>{item}</span>)}</div></section>}
       <details className="source-details"><summary>查看结构化事实与资料来源（{draft.facts.length} 条事实）</summary><div className="fact-list">{draft.facts.map((fact) => <div key={fact.fact_id}><span className={`certainty ${fact.certainty}`}>{fact.certainty === "uncertain" ? "不确定" : fact.certainty === "doctor_confirmed" ? "医生明确" : fact.certainty === "pending" ? "待核对" : "资料明确"}</span><p><strong>{fact.value}</strong><small>{fact.event_time} · {fact.encounter_scope === "current" ? "本次" : fact.encounter_scope === "prior" ? "既往" : "归属待核对"} · 来源 {fact.source_ids.join("、")}</small></p></div>)}</div><div className="source-list">{draft.sources.map((source) => <div key={source.source_id}><b>{source.source_id}</b><span><strong>{source.title}</strong><small>{source.evidence}</small></span></div>)}</div></details>
       <div className="result-actions"><button type="button" className="secondary-action" onClick={() => setStage("input")}>返回补充原始资料</button><button type="button" className="primary-action compact" onClick={reset}>整理另一名患者</button></div>
       <button type="button" className="floating-chat" onClick={() => openTemplateChat()}>问 AI · 文书核对</button>
-      {chatOpen && <aside className="chat-drawer" aria-label="AI文书核对窗口"><div className="chat-header"><div><strong>问 AI · 文书核对</strong><small>{chatContext}</small></div><button type="button" onClick={() => setChatOpen(false)} aria-label="关闭聊天">×</button></div><div className="chat-boundary">可以问“这项要核对什么、怎样记录”；AI不会替患者回答，也不做诊断和治疗建议。</div><div className="chat-messages">{chatMessages.length === 0 ? <div className="chat-empty"><p>例如：</p><button type="button" onClick={() => setChatInput("区域淋巴结这一项，通常要记录哪些部位和查体特征？")}>区域淋巴结要记什么？</button><button type="button" onClick={() => setChatInput("一个阳性症状需要补充哪些时间和程度信息？")}>阳性症状怎么补细节？</button></div> : chatMessages.map((message, index) => <div className={message.role} key={`${message.role}-${index}`}>{message.content}</div>)}{chatLoading && <div className="assistant loading">正在整理文书核对要点…</div>}</div><form onSubmit={sendChat}><textarea value={chatInput} onChange={(event) => setChatInput(event.target.value)} maxLength={1200} placeholder="只输入完全合成或严格脱敏内容……" /><button type="submit" disabled={!chatInput.trim() || chatLoading}>发送</button></form></aside>}
+      {chatOpen && <aside className="chat-drawer" aria-label="AI文书核对窗口"><div className="chat-header"><div><strong>问 AI · 文书核对</strong><small>{chatContext}</small></div><button type="button" onClick={() => setChatOpen(false)} aria-label="关闭聊天">×</button></div><div className="chat-boundary">可以问“这项要核对什么、怎样记录”；AI不会替患者回答，也不做诊断和治疗建议。</div><div className="chat-models" aria-label="回答模型">{chatModelOptions.map((option) => <button type="button" key={option.id} className={chatModel === option.id ? "selected" : ""} disabled={chatLoading} onClick={() => setChatModel(option.id)}><strong>{option.label}</strong><small>{option.note}</small></button>)}</div><div className="chat-messages">{chatMessages.length === 0 ? <div className="chat-empty"><p>例如：</p><button type="button" onClick={() => setChatInput("区域淋巴结这一项，通常要记录哪些部位和查体特征？")}>区域淋巴结要记什么？</button><button type="button" onClick={() => setChatInput("一个阳性症状需要补充哪些时间和程度信息？")}>阳性症状怎么补细节？</button></div> : chatMessages.map((message, index) => <div className={message.role} key={`${message.role}-${index}`}><div className="chat-copy">{renderChatContent(message.content)}</div>{message.role === "assistant" && message.modelLabel && <small className="chat-meta">{message.modelLabel} · {message.elapsedSeconds}秒</small>}</div>)}{chatLoading && <div className="assistant loading"><i className="spinner" />正在思考 {chatElapsed} 秒…</div>}</div><form onSubmit={sendChat}><textarea value={chatInput} onChange={(event) => setChatInput(event.target.value)} maxLength={1200} placeholder="只输入完全合成或严格脱敏内容……" /><button type="submit" disabled={!chatInput.trim() || chatLoading}>发送</button></form></aside>}
     </section>}
   </main>;
 }

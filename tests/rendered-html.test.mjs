@@ -42,6 +42,7 @@ async function analyzeWithMockModel() {
         { fact_id: "F1", field: "diagnosis", value: "确诊黑色素瘤3天", event_time: "3天前", event_type: "onset_diagnosis", encounter_scope: "prior", certainty: "explicit", source_ids: ["S1"] },
         { fact_id: "F2", field: "pathology", value: "免疫组化已完成，具体结果未提供", event_time: "未提供", event_type: "pathology_molecular", encounter_scope: "prior", certainty: "explicit", source_ids: ["S1"] },
         { fact_id: "F3", field: "current_purpose", value: "进一步抗肿瘤治疗", event_time: "本次", event_type: "current_purpose", encounter_scope: "current", certainty: "explicit", source_ids: ["S-PURPOSE"] },
+        { fact_id: "F4", field: "imaging", value: "影像报告提示右侧腋窝淋巴结肿大", event_time: "2天前", event_type: "progression_evidence", encounter_scope: "prior", certainty: "explicit", source_ids: ["S1"] },
       ],
       pending_fields: ["过敏史：待核对"],
     },
@@ -114,7 +115,7 @@ async function recomposeWithMockModel() {
   } finally { globalThis.fetch = originalFetch; }
 }
 
-async function templateChatWithMockModel() {
+async function templateChatWithMockModel(model = "deepseek-v4-pro") {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("chat-test", `${process.pid}-${Date.now()}`);
   const { default: worker } = await import(workerUrl.href);
@@ -126,7 +127,7 @@ async function templateChatWithMockModel() {
   };
   try {
     const response = await worker.fetch(
-      new Request("http://localhost/api/template-chat", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message: "区域淋巴结要记录什么？", history: [], template_name: "黑色素瘤入院病史候选模板", item_context: "区域淋巴结实际查体" }) }),
+      new Request("http://localhost/api/template-chat", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message: "区域淋巴结要记录什么？", history: [], template_name: "黑色素瘤入院病史候选模板", item_context: "区域淋巴结实际查体", model }) }),
       { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) }, ARK_CODING_API_KEY: "synthetic-test-key" },
       { waitUntil() {}, passThroughOnException() {} },
     );
@@ -157,6 +158,10 @@ test("renders the single-entry admission draft package workflow", async () => {
   assert.match(html, /再给候选选项/);
   assert.match(html, /只有你点击确认后才加入草稿/);
   assert.match(pageSource, /fetch\("\/api\/template-chat\/"/);
+  assert.match(pageSource, /快速 · V4 Flash/);
+  assert.match(pageSource, /深入 · V4 Pro/);
+  assert.match(pageSource, /正在思考.*秒/);
+  assert.match(pageSource, /renderChatContent/);
   assert.doesNotMatch(html, /进入管床/);
   assert.doesNotMatch(html, /合成患者 A02/);
   assert.doesNotMatch(html, /codex-preview/);
@@ -175,7 +180,7 @@ test("extracts facts first and adds melanoma scaffolds plus guided choices", asy
   assert.equal(response.status, 200);
   assert.equal(calls, 2);
   const body = await response.json();
-  assert.equal(body.result.facts.length, 3);
+  assert.equal(body.result.facts.length, 4);
   assert.equal(body.result.current_purpose, undefined);
   assert.match(body.result.present_illness, /首次发现时间/);
   assert.match(body.result.past_history, /待选择/);
@@ -189,6 +194,12 @@ test("extracts facts first and adds melanoma scaffolds plus guided choices", asy
   assert.ok(body.result.review_items.length >= 12);
   assert.ok(body.result.review_items.some((item) => item.choice_id === "melanoma_neurologic"));
   assert.ok(body.result.review_items.some((item) => item.choice_id === "melanoma_exam_nodes"));
+  assert.match(body.result.review_items.find((item) => item.choice_id === "melanoma_exam_nodes").help, /影像.*实际触诊/);
+  assert.ok(body.result.review_items.some((item) => item.choice_id === "oncology_performance_status"));
+  assert.ok(body.result.review_items.find((item) => item.choice_id === "melanoma_sampling").options.find((option) => option.option_id === "node").detail_prompt.includes("取材"));
+  assert.equal(body.result.review_items.find((item) => item.choice_id === "melanoma_pathology_detail").options.find((option) => option.option_id === "none").detail_prompt, undefined);
+  assert.match(body.result.specialist_exam, /ECOG PS/);
+  assert.doesNotMatch(body.result.specialist_exam, /右侧腋窝.*肿大/);
   assert.deepEqual(body.result.pending_fields, ["过敏史：待核对"]);
 });
 
@@ -210,6 +221,15 @@ test("template chat explains documentation fields without replacing clinical jud
   assert.equal(response.status, 200);
   assert.match(prompt, /不能替患者回答有或无/);
   assert.match(prompt, /不能推荐检查、药物、剂量、治疗/);
+  assert.match(prompt, /不超过180个汉字/);
   const body = await response.json();
+  assert.equal(body.model, "deepseek-v4-pro");
   assert.match(body.answer, /部位、大小、质地、活动度及压痛/);
+});
+
+test("template chat rejects models outside the documented selector", async () => {
+  const { response } = await templateChatWithMockModel("unknown-model");
+  assert.equal(response.status, 400);
+  const body = await response.json();
+  assert.match(body.error, /不支持的模型/);
 });
