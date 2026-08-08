@@ -123,7 +123,7 @@ async function templateChatWithMockModel(model = "deepseek-v4-pro") {
   let prompt = "";
   globalThis.fetch = async (_url, init) => {
     prompt = JSON.parse(init.body).input;
-    return new Response(JSON.stringify({ output_text: "建议核对具体淋巴引流区、部位、大小、质地、活动度及压痛；这些记录不能替代诊断。" }), { status: 200 });
+    return new Response(JSON.stringify({ output_text: "**重点**：建议核对具体淋巴引流区、部位、大小、质地、活动度及压痛；*记录示例*只能使用已核实内容，这些记录不能替代诊断。" }), { status: 200 });
   };
   try {
     const response = await worker.fetch(
@@ -224,6 +224,8 @@ test("template chat explains documentation fields without replacing clinical jud
   assert.match(prompt, /不超过180个汉字/);
   const body = await response.json();
   assert.equal(body.model, "deepseek-v4-pro");
+  assert.match(body.answer, /\*\*重点\*\*/);
+  assert.doesNotMatch(body.answer, /\*记录示例\*/);
   assert.match(body.answer, /部位、大小、质地、活动度及压痛/);
 });
 
