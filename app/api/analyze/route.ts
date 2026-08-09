@@ -36,7 +36,7 @@ const parseJson = (text: string) => {
   }
 };
 
-const requestJson = async (baseUrl: string, apiKey: string, model: string, prompt: string, maxOutputTokens: number, timeoutMs = 110000) => {
+const requestJson = async (baseUrl: string, apiKey: string, model: string, prompt: string, maxOutputTokens: number, timeoutMs = 50000) => {
   const upstream = await fetch(`${baseUrl}/responses`, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
@@ -89,7 +89,7 @@ const buildExtractionPrompt = (sourceText: string, currentPurpose: string) => [
   `待抽取资料：\n${sourceText}`,
 ].join("\n\n");
 
-const SOURCE_CHUNK_CHARS = 1800;
+const SOURCE_CHUNK_CHARS = 2600;
 const splitSourceText = (sourceText: string) => {
   if (sourceText.length <= 2500) return [sourceText];
   const pages = sourceText.split(/(?=【[^】]+(?:AI识别|视觉转录)[^】]*】)/).map((part) => part.trim()).filter(Boolean);
@@ -160,22 +160,18 @@ const extractFacts = async (baseUrl: string, apiKey: string, model: string, sour
   const chunks = splitSourceText(sourceText);
   const parts: FactExtraction[] = [];
   let fallbackCount = 0;
-  for (let offset = 0; offset < chunks.length; offset += 2) {
-    const batch = chunks.slice(offset, offset + 2);
-    const results = await Promise.all(batch.map(async (chunk, index) => {
-      const chunkIndex = offset + index;
+  const results = await Promise.all(chunks.map(async (chunk, chunkIndex) => {
       let extracted: unknown;
       try {
-        extracted = await requestJson(baseUrl, apiKey, model, buildExtractionPrompt(chunk, chunkIndex === 0 ? currentPurpose : ""), 3600);
+        extracted = await requestJson(baseUrl, apiKey, model, buildExtractionPrompt(chunk, chunkIndex === 0 ? currentPurpose : ""), 2600);
         if (!isValidFactExtraction(extracted)) throw new Error("结构不完整");
         return { part: withPrefix(extracted, chunkIndex), usedFallback: false };
       } catch {
         return { part: withPrefix(rawChunkExtraction(chunk, chunkIndex), chunkIndex), usedFallback: true };
       }
-    }));
-    parts.push(...results.map((result) => result.part));
-    fallbackCount += results.filter((result) => result.usedFallback).length;
-  }
+  }));
+  parts.push(...results.map((result) => result.part));
+  fallbackCount += results.filter((result) => result.usedFallback).length;
   const merged = mergeExtractions(parts, currentPurpose);
   if (!isValidFactExtraction(merged)) throw new Error("合并后的事实结构不完整");
   return { extraction: merged, chunkCount: chunks.length, fallbackCount };
@@ -254,7 +250,7 @@ export async function POST(request: Request) {
     let rawDraft: AdmissionDraft;
     let processingStatus: "complete" | "draft_fallback" = "complete";
     try {
-      const generated = await requestJson(baseUrl, apiKey, model, buildDraftPrompt(extraction), 3600, 120000);
+      const generated = await requestJson(baseUrl, apiKey, model, buildDraftPrompt(extraction), 3200, 50000);
       if (!isValidAdmissionDraft(generated)) throw new Error("草稿包结构不完整");
       rawDraft = generated;
     } catch {

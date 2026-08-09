@@ -35,7 +35,7 @@ export async function POST(request: Request) {
     if (!apiKey) return Response.json({ error: "图片识别服务尚未配置。请先配置服务端密钥。" }, { status: 503 });
 
     const hasSeparateVisionService = Boolean(process.env.ARK_VISION_BASE_URL);
-    const model = process.env.ARK_VISION_MODEL || "doubao-seed-2.0-code";
+    const model = process.env.ARK_VISION_MODEL || "doubao-seed-2.1-turbo";
     const baseUrl = (process.env.ARK_VISION_BASE_URL || process.env.ARK_CODING_BASE_URL || "https://ark.cn-beijing.volces.com/api/coding/v3").replace(/\/$/, "");
     const bytes = new Uint8Array(await image.arrayBuffer());
     const dataUrl = `data:${image.type};base64,${toBase64(bytes)}`;

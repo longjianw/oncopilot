@@ -34,7 +34,7 @@ async function extractWithVisionService() {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (_url, init) => {
     const body = JSON.parse(init.body);
-    assert.equal(body.model, "doubao-seed-2.0-code");
+    assert.equal(body.model, "doubao-seed-2.1-turbo");
     assert.equal(body.input[0].content[1].type, "input_image");
     return new Response(JSON.stringify({ output_text: "完全合成病理资料" }), { status: 200 });
   };
@@ -43,6 +43,32 @@ async function extractWithVisionService() {
   try {
     return await worker.fetch(
       new Request("http://localhost/api/extract-image", { method: "POST", body: formData }),
+      { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) }, ARK_CODING_API_KEY: "synthetic-test-key" },
+      { waitUntil() {}, passThroughOnException() {} },
+    );
+  } finally { globalThis.fetch = originalFetch; }
+}
+
+async function extractBatchWithVisionService() {
+  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
+  workerUrl.searchParams.set("image-batch-test", `${process.pid}-${Date.now()}`);
+  const { default: worker } = await import(workerUrl.href);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    assert.equal(body.model, "doubao-seed-2.1-turbo");
+    assert.equal(body.input[0].content.filter((item) => item.type === "input_image").length, 3);
+    return new Response(JSON.stringify({ output_text: JSON.stringify({ pages: [
+      { index: 1, text: "完全合成第1页" },
+      { index: 2, text: "完全合成第2页" },
+      { index: 3, text: "完全合成第3页" },
+    ] }) }), { status: 200 });
+  };
+  const formData = new FormData();
+  for (let index = 1; index <= 3; index += 1) formData.append("images", new File([`synthetic-${index}`], `synthetic-${index}.jpg`, { type: "image/jpeg" }));
+  try {
+    return await worker.fetch(
+      new Request("http://localhost/api/extract-images", { method: "POST", body: formData }),
       { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) }, ARK_CODING_API_KEY: "synthetic-test-key" },
       { waitUntil() {}, passThroughOnException() {} },
     );
@@ -109,10 +135,16 @@ async function analyzeLongSourceWithMockModel(draftFails = false, extractionFail
   const originalFetch = globalThis.fetch;
   let extractionCalls = 0;
   let draftCalls = 0;
+  let activeExtractions = 0;
+  let maxActiveExtractions = 0;
   globalThis.fetch = async (_url, init) => {
     const prompt = JSON.parse(init.body).input;
     if (prompt.includes("结构化事实抽取器")) {
       extractionCalls += 1;
+      activeExtractions += 1;
+      maxActiveExtractions = Math.max(maxActiveExtractions, activeExtractions);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      activeExtractions -= 1;
       if (extractionFails) return new Response(JSON.stringify({ output_text: JSON.stringify({ current_purpose: null, sources: [], facts: [], pending_fields: [] }) }), { status: 200 });
       return new Response(JSON.stringify({ output_text: JSON.stringify({
         current_purpose: prompt.includes("进一步评估") ? "进一步评估" : null,
@@ -131,7 +163,7 @@ async function analyzeLongSourceWithMockModel(draftFails = false, extractionFail
       { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) }, ARK_CODING_API_KEY: "synthetic-test-key" },
       { waitUntil() {}, passThroughOnException() {} },
     );
-    return { response, extractionCalls, draftCalls };
+    return { response, extractionCalls, draftCalls, maxActiveExtractions };
   } finally { globalThis.fetch = originalFetch; }
 }
 
@@ -273,8 +305,10 @@ test("renders the single-entry admission draft package workflow", async () => {
   assert.match(pageSource, /把候选路径填入计划整理/);
   assert.match(pageSource, /正在用图像模型转录/);
   assert.match(pageSource, /重试本页/);
-  assert.match(pageSource, /batch\.map\(\(input\) => recognize\(input\)\)/);
-  assert.doesNotMatch(pageSource, /batch\.map\(recognize\)/);
+  assert.match(pageSource, /\/api\/extract-images/);
+  assert.match(pageSource, /VISION_BATCH_SIZE = 4/);
+  assert.match(pageSource, /Promise\.all\(batches\.map\(\(batch\) => recognizeBatch\(batch\)\)\)/);
+  assert.doesNotMatch(pageSource, /RECOGNITION_CONCURRENCY/);
   assert.match(pageSource, /正在分段核对事实并生成草稿/);
   assert.match(pageSource, /AI连贯合成未完成/);
   assert.doesNotMatch(html, /进入管床/);
@@ -294,9 +328,18 @@ test("uses the configured multimodal Doubao model for image transcription", asyn
   const response = await extractWithVisionService();
   assert.equal(response.status, 200, await response.clone().text());
   const body = await response.json();
-  assert.equal(body.model, "doubao-seed-2.0-code");
+  assert.equal(body.model, "doubao-seed-2.1-turbo");
   assert.equal(body.method, "vision_transcription");
   assert.equal(body.extracted_text, "完全合成病理资料");
+});
+
+test("transcribes several pages in one multimodal Doubao request", async () => {
+  const response = await extractBatchWithVisionService();
+  assert.equal(response.status, 200, await response.clone().text());
+  const body = await response.json();
+  assert.equal(body.model, "doubao-seed-2.1-turbo");
+  assert.equal(body.method, "batched_vision_transcription");
+  assert.deepEqual(body.pages.map((page) => page.text), ["完全合成第1页", "完全合成第2页", "完全合成第3页"]);
 });
 
 test("extracts facts first and adds melanoma scaffolds plus guided choices", async () => {
@@ -331,12 +374,13 @@ test("extracts facts first and adds melanoma scaffolds plus guided choices", asy
 });
 
 test("segments long multi-page source text before fact extraction and merges the facts", async () => {
-  const { response, extractionCalls, draftCalls } = await analyzeLongSourceWithMockModel();
+  const { response, extractionCalls, draftCalls, maxActiveExtractions } = await analyzeLongSourceWithMockModel();
   assert.equal(response.status, 200, await response.clone().text());
   const body = await response.json();
   assert.equal(body.processing_mode, "chunked");
   assert.ok(body.chunk_count >= 2);
   assert.equal(extractionCalls, body.chunk_count);
+  assert.equal(maxActiveExtractions, body.chunk_count);
   assert.equal(draftCalls, 1);
   assert.equal(body.result.facts.length, body.chunk_count + 1);
   assert.ok(body.result.facts.some((fact) => fact.fact_id === "F-PURPOSE"));

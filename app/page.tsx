@@ -22,7 +22,7 @@ const MAX_PDF_PAGES = 20;
 const MAX_UPLOAD_BYTES = 900_000;
 const MAX_EDGE = 1800;
 const MAX_SOURCE_CHARS = 32_000;
-const RECOGNITION_CONCURRENCY = 2;
+const VISION_BATCH_SIZE = 4;
 
 const sectionLabels: Array<{ field: DraftField; label: string; hint: string; placeholder: string; large?: boolean }> = [
   { field: "chief_complaint", label: "主诉", hint: "疾病或主要症状 + 时间 + 本次目的", placeholder: "可在上方点选候选项，也可直接输入" },
@@ -350,7 +350,12 @@ export default function Home() {
       ].filter(Boolean);
       if (notices.length) setAnalysisNotice(notices.join(" "));
       setDraft(payload.result); setStage("result"); void generateClinicalReference(payload.result);
-    } catch (caught) { setError(caught instanceof Error ? caught.message : "AI整理失败，请稍后重试。"); } finally { setLoading(false); }
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "AI整理失败，请稍后重试。";
+      setError(/Failed to fetch|Load failed|NetworkError/i.test(message)
+        ? "生成过程中连接中断，已转录的文字仍在页面上，可直接重试生成，无需重新上传。"
+        : message);
+    } finally { setLoading(false); }
   };
 
   const recognize = async (input: PreparedInput, existingId?: string): Promise<string | null> => {
@@ -372,6 +377,28 @@ export default function Home() {
     if (heading) setSourceText((current) => current.trim() ? `${current.trim()}\n\n${heading}` : heading);
   };
 
+  const recognizeBatch = async (batch: Array<PreparedInput & { id: string }>) => {
+    try {
+      const formData = new FormData();
+      batch.forEach((input) => formData.append("images", input.file));
+      const response = await fetch("/api/extract-images", { method: "POST", body: formData });
+      const raw = await response.text();
+      let payload: { pages?: Array<{ index: number; text: string }>; model?: string; error?: string } = {};
+      try { payload = JSON.parse(raw); } catch { /* fall back to single pages below */ }
+      if (!response.ok || !payload.pages || payload.pages.length !== batch.length) throw new Error(payload.error || "批量识别未完整返回");
+      const headings = payload.pages.map((page) => {
+        const input = batch[page.index - 1];
+        if (!input || !page.text.trim()) return null;
+        updateUpload(input.id, { status: "done", model: payload.model });
+        return `【${input.name}｜视觉转录，待核对】\n${page.text.trim()}`;
+      }).filter((heading): heading is string => Boolean(heading));
+      if (headings.length !== batch.length) throw new Error("批量识别遗漏页面");
+      return headings;
+    } catch {
+      return (await Promise.all(batch.map((input) => recognize(input, input.id)))).filter((heading): heading is string => Boolean(heading));
+    }
+  };
+
   const chooseDocuments = async (event: ChangeEvent<HTMLInputElement>) => {
     const selected = Array.from(event.target.files || []); event.target.value = "";
     if (!selected.length) return;
@@ -390,11 +417,12 @@ export default function Home() {
         prepared.forEach((item) => item.preview && URL.revokeObjectURL(item.preview));
         throw new Error(`一次最多识别 ${MAX_ITEMS} 张图或 PDF 页面，请分批上传。`);
       }
-      for (let offset = 0; offset < prepared.length; offset += RECOGNITION_CONCURRENCY) {
-        const batch = prepared.slice(offset, offset + RECOGNITION_CONCURRENCY);
-        const headings = (await Promise.all(batch.map((input) => recognize(input)))).filter((heading): heading is string => Boolean(heading));
-        if (headings.length) setSourceText((current) => current.trim() ? `${current.trim()}\n\n${headings.join("\n\n")}` : headings.join("\n\n"));
-      }
+      const identified = prepared.map((input) => ({ ...input, id: crypto.randomUUID() }));
+      setUploads((items) => [...items, ...identified.map((input) => ({ id: input.id, name: input.name, file: input.file, preview: input.preview, status: "recognizing" as const }))]);
+      const batches = Array.from({ length: Math.ceil(identified.length / VISION_BATCH_SIZE) }, (_, index) => identified.slice(index * VISION_BATCH_SIZE, (index + 1) * VISION_BATCH_SIZE));
+      const batchHeadings = await Promise.all(batches.map((batch) => recognizeBatch(batch)));
+      const headings = batchHeadings.flat();
+      if (headings.length) setSourceText((current) => current.trim() ? `${current.trim()}\n\n${headings.join("\n\n")}` : headings.join("\n\n"));
     } catch (caught) { setError(caught instanceof Error ? caught.message : "文件处理失败，请重试。"); }
   };
 
