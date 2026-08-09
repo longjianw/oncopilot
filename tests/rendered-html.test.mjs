@@ -34,7 +34,7 @@ async function extractWithVisionService() {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (_url, init) => {
     const body = JSON.parse(init.body);
-    assert.equal(body.model, "doubao-seed-2.1-turbo");
+    assert.equal(body.model, "doubao-seed-2.0-code");
     assert.equal(body.input[0].content[1].type, "input_image");
     return new Response(JSON.stringify({ output_text: "完全合成病理资料" }), { status: 200 });
   };
@@ -56,7 +56,7 @@ async function extractBatchWithVisionService() {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (_url, init) => {
     const body = JSON.parse(init.body);
-    assert.equal(body.model, "doubao-seed-2.1-turbo");
+    assert.equal(body.model, "doubao-seed-2.0-code");
     assert.equal(body.input[0].content.filter((item) => item.type === "input_image").length, 3);
     return new Response(JSON.stringify({ output_text: JSON.stringify({ pages: [
       { index: 1, text: "完全合成第1页" },
@@ -303,11 +303,14 @@ test("renders the single-entry admission draft package workflow", async () => {
   assert.match(pageSource, /联网核验权威网页/);
   assert.match(pageSource, /填入诊断整理/);
   assert.match(pageSource, /把候选路径填入计划整理/);
-  assert.match(pageSource, /正在用图像模型转录/);
+  assert.match(pageSource, /正在用图像模型提取入院关键资料/);
   assert.match(pageSource, /重试本页/);
   assert.match(pageSource, /\/api\/extract-images/);
-  assert.match(pageSource, /VISION_BATCH_SIZE = 4/);
-  assert.match(pageSource, /Promise\.all\(batches\.map\(\(batch\) => recognizeBatch\(batch\)\)\)/);
+  assert.match(pageSource, /VISION_BATCH_SIZE = 2/);
+  assert.match(pageSource, /VISION_BATCH_BYTES = 850_000/);
+  assert.match(pageSource, /VISION_BATCH_CONCURRENCY = 2/);
+  assert.match(pageSource, /wave\.map\(\(batch\) => recognizeBatch\(batch\)\)/);
+  assert.match(pageSource, /请只重试失败页/);
   assert.doesNotMatch(pageSource, /RECOGNITION_CONCURRENCY/);
   assert.match(pageSource, /正在分段核对事实并生成草稿/);
   assert.match(pageSource, /AI连贯合成未完成/);
@@ -328,7 +331,7 @@ test("uses the configured multimodal Doubao model for image transcription", asyn
   const response = await extractWithVisionService();
   assert.equal(response.status, 200, await response.clone().text());
   const body = await response.json();
-  assert.equal(body.model, "doubao-seed-2.1-turbo");
+  assert.equal(body.model, "doubao-seed-2.0-code");
   assert.equal(body.method, "vision_transcription");
   assert.equal(body.extracted_text, "完全合成病理资料");
 });
@@ -337,7 +340,7 @@ test("transcribes several pages in one multimodal Doubao request", async () => {
   const response = await extractBatchWithVisionService();
   assert.equal(response.status, 200, await response.clone().text());
   const body = await response.json();
-  assert.equal(body.model, "doubao-seed-2.1-turbo");
+  assert.equal(body.model, "doubao-seed-2.0-code");
   assert.equal(body.method, "batched_vision_transcription");
   assert.deepEqual(body.pages.map((page) => page.text), ["完全合成第1页", "完全合成第2页", "完全合成第3页"]);
 });

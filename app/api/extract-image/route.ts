@@ -35,14 +35,14 @@ export async function POST(request: Request) {
     if (!apiKey) return Response.json({ error: "图片识别服务尚未配置。请先配置服务端密钥。" }, { status: 503 });
 
     const hasSeparateVisionService = Boolean(process.env.ARK_VISION_BASE_URL);
-    const model = process.env.ARK_VISION_MODEL || "doubao-seed-2.1-turbo";
+    const model = process.env.ARK_VISION_MODEL || "doubao-seed-2.0-code";
     const baseUrl = (process.env.ARK_VISION_BASE_URL || process.env.ARK_CODING_BASE_URL || "https://ark.cn-beijing.volces.com/api/coding/v3").replace(/\/$/, "");
     const bytes = new Uint8Array(await image.arrayBuffer());
     const dataUrl = `data:${image.type};base64,${toBase64(bytes)}`;
     const prompt = [
-      "你是病历资料转录助手。请逐行转录图片中能看清的文字、数值、日期、单位和表格字段。",
-      "不要诊断、解释、补全、推测或改写；看不清的内容明确标记为[识别不清]。",
-      "输出纯文本，尽量保留报告原有层级。图片可能来自完全合成或严格脱敏资料。",
+      "你是肿瘤科入院资料提取助手。只提取会进入入院记录的关键资料，不做逐字全文OCR。",
+      "优先保留日期、确诊经过、病理/免疫组化/分子结果、手术和既往治疗、影像与关键检验、医生已写明的诊断/计划、本次症状和来院目的。",
+      "保留原文数值、单位、阴阳性和不确定词；不要诊断、解释、补全或推测。输出纯文本，尽量不超过1200字。",
     ].join("\n");
 
     const requestBody = hasSeparateVisionService
@@ -65,8 +65,8 @@ export async function POST(request: Request) {
     const upstream = await fetch(`${baseUrl}/${hasSeparateVisionService ? "chat/completions" : "responses"}`, {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify(requestBody),
-      signal: AbortSignal.timeout(110000),
+      body: JSON.stringify(hasSeparateVisionService ? requestBody : { ...requestBody, max_output_tokens: 1800 }),
+      signal: AbortSignal.timeout(75000),
     });
 
     if (!upstream.ok) {
@@ -80,7 +80,7 @@ export async function POST(request: Request) {
     return Response.json({ extracted_text: extractedText, model, method: "vision_transcription" }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     const message = error instanceof Error && error.name === "TimeoutError"
-      ? "视觉模型超过110秒仍未完成，请重试本页；字迹模糊、旋转或并发繁忙都可能导致变慢。"
+      ? "本页超过75秒仍未完成，请稍后只重试本页。"
       : error instanceof Error && /413|Payload Too Large/.test(error.message)
         ? "图片仍然过大，请裁剪到单页后重试。"
         : "图片暂时没有识别出来，请重试一次。";

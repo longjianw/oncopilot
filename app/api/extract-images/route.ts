@@ -60,16 +60,17 @@ export async function POST(request: Request) {
     if (!apiKey) return Response.json({ error: "图片识别服务尚未配置。请先配置服务端密钥。" }, { status: 503 });
 
     const hasSeparateVisionService = Boolean(process.env.ARK_VISION_BASE_URL);
-    const model = process.env.ARK_VISION_MODEL || "doubao-seed-2.1-turbo";
+    const model = process.env.ARK_VISION_MODEL || "doubao-seed-2.0-code";
     const baseUrl = (process.env.ARK_VISION_BASE_URL || process.env.ARK_CODING_BASE_URL || "https://ark.cn-beijing.volces.com/api/coding/v3").replace(/\/$/, "");
     const dataUrls = await Promise.all((images as File[]).map(async (image) => {
       const bytes = new Uint8Array(await image.arrayBuffer());
       return `data:${image.type};base64,${toBase64(bytes)}`;
     }));
     const prompt = [
-      `下面共有${images.length}张病历资料页。请分页逐行转录能看清的文字、数值、日期、单位和表格字段。`,
-      "不要诊断、解释、补全、推测或改写；看不清的内容标记为[识别不清]。",
-      "只输出JSON，不要Markdown。格式为：{\"pages\":[{\"index\":1,\"text\":\"第1张的完整转录\"}]}。pages必须按输入顺序包含全部页面。",
+      `下面共有${images.length}张病历资料页。请分页提取用于肿瘤科入院记录的关键资料，不做逐字全文OCR。`,
+      "优先保留：日期和时间、首发/确诊经过、病理与免疫组化/分子结果、手术与既往抗肿瘤治疗、影像与关键检验、医生已写明的诊断/计划、本次症状和来院目的。",
+      "数值、单位、阴阳性和不确定词必须忠实保留。不要诊断、解释、补全或推测；看不清的关键字段标记为[识别不清]。",
+      "只输出JSON，不要Markdown。格式为：{\"pages\":[{\"index\":1,\"text\":\"第1张的关键资料，尽量不超过1200字\"}]}。pages必须按输入顺序包含全部页面。",
     ].join("\n");
     const responseContent = [
       hasSeparateVisionService ? { type: "text", text: prompt } : { type: "input_text", text: prompt },
@@ -79,13 +80,13 @@ export async function POST(request: Request) {
     ];
     const requestBody = hasSeparateVisionService
       ? { model, temperature: 0, messages: [{ role: "user", content: responseContent }] }
-      : { model, input: [{ role: "user", content: responseContent }], max_output_tokens: 10000 };
+      : { model, input: [{ role: "user", content: responseContent }], max_output_tokens: 3200 };
 
     const upstream = await fetch(`${baseUrl}/${hasSeparateVisionService ? "chat/completions" : "responses"}`, {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify(requestBody),
-      signal: AbortSignal.timeout(90000),
+      signal: AbortSignal.timeout(75000),
     });
     if (!upstream.ok) throw new Error(`视觉模型请求失败：${upstream.status}`);
     const data = await upstream.json() as VisionResponse;
@@ -95,8 +96,8 @@ export async function POST(request: Request) {
     return Response.json({ pages, model, method: "batched_vision_transcription" }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     const message = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")
-      ? "这一批图片超过90秒仍未完成，系统将自动改为单页重试。"
-      : "这一批图片未完整返回，系统将自动改为单页重试。";
+      ? "这一批超过75秒仍未完成，请只重试这一批中的失败页。"
+      : "这一批未完整返回，请只重试失败页。";
     return Response.json({ error: message }, { status: 502, headers: { "Cache-Control": "no-store" } });
   }
 }

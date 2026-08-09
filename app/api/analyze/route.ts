@@ -92,7 +92,7 @@ const buildExtractionPrompt = (sourceText: string, currentPurpose: string) => [
 const SOURCE_CHUNK_CHARS = 2600;
 const splitSourceText = (sourceText: string) => {
   if (sourceText.length <= 2500) return [sourceText];
-  const pages = sourceText.split(/(?=【[^】]+(?:AI识别|视觉转录)[^】]*】)/).map((part) => part.trim()).filter(Boolean);
+  const pages = sourceText.split(/(?=【[^】]+(?:AI识别|视觉(?:转录|提取))[^】]*】)/).map((part) => part.trim()).filter(Boolean);
   const units = pages.length > 1 ? pages : sourceText.split(/\n{2,}/).map((part) => part.trim()).filter(Boolean);
   const chunks: string[] = [];
   let current = "";

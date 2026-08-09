@@ -19,10 +19,12 @@ type PreparedInput = { name: string; file: File; preview?: string };
 
 const MAX_ITEMS = 20;
 const MAX_PDF_PAGES = 20;
-const MAX_UPLOAD_BYTES = 900_000;
+const MAX_UPLOAD_BYTES = 780_000;
 const MAX_EDGE = 1800;
 const MAX_SOURCE_CHARS = 32_000;
-const VISION_BATCH_SIZE = 4;
+const VISION_BATCH_SIZE = 2;
+const VISION_BATCH_BYTES = 850_000;
+const VISION_BATCH_CONCURRENCY = 2;
 
 const sectionLabels: Array<{ field: DraftField; label: string; hint: string; placeholder: string; large?: boolean }> = [
   { field: "chief_complaint", label: "主诉", hint: "疾病或主要症状 + 时间 + 本次目的", placeholder: "可在上方点选候选项，也可直接输入" },
@@ -390,12 +392,14 @@ export default function Home() {
         const input = batch[page.index - 1];
         if (!input || !page.text.trim()) return null;
         updateUpload(input.id, { status: "done", model: payload.model });
-        return `【${input.name}｜视觉转录，待核对】\n${page.text.trim()}`;
+        return `【${input.name}｜视觉提取关键资料，待核对】\n${page.text.trim()}`;
       }).filter((heading): heading is string => Boolean(heading));
       if (headings.length !== batch.length) throw new Error("批量识别遗漏页面");
       return headings;
-    } catch {
-      return (await Promise.all(batch.map((input) => recognize(input, input.id)))).filter((heading): heading is string => Boolean(heading));
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "这一批资料未完成，请只重试失败页。";
+      batch.forEach((input) => updateUpload(input.id, { status: "error", error: message }));
+      return [];
     }
   };
 
@@ -419,9 +423,18 @@ export default function Home() {
       }
       const identified = prepared.map((input) => ({ ...input, id: crypto.randomUUID() }));
       setUploads((items) => [...items, ...identified.map((input) => ({ id: input.id, name: input.name, file: input.file, preview: input.preview, status: "recognizing" as const }))]);
-      const batches = Array.from({ length: Math.ceil(identified.length / VISION_BATCH_SIZE) }, (_, index) => identified.slice(index * VISION_BATCH_SIZE, (index + 1) * VISION_BATCH_SIZE));
-      const batchHeadings = await Promise.all(batches.map((batch) => recognizeBatch(batch)));
-      const headings = batchHeadings.flat();
+      const batches: Array<Array<PreparedInput & { id: string }>> = [];
+      for (const input of identified) {
+        const current = batches.at(-1);
+        const currentBytes = current?.reduce((sum, item) => sum + item.file.size, 0) || 0;
+        if (!current || current.length >= VISION_BATCH_SIZE || currentBytes + input.file.size > VISION_BATCH_BYTES) batches.push([input]);
+        else current.push(input);
+      }
+      const headings: string[] = [];
+      for (let offset = 0; offset < batches.length; offset += VISION_BATCH_CONCURRENCY) {
+        const wave = batches.slice(offset, offset + VISION_BATCH_CONCURRENCY);
+        headings.push(...(await Promise.all(wave.map((batch) => recognizeBatch(batch)))).flat());
+      }
       if (headings.length) setSourceText((current) => current.trim() ? `${current.trim()}\n\n${headings.join("\n\n")}` : headings.join("\n\n"));
     } catch (caught) { setError(caught instanceof Error ? caught.message : "文件处理失败，请重试。"); }
   };
@@ -457,7 +470,7 @@ export default function Home() {
         <p className="reference-status"><b>安全边界</b> 仅使用完全合成或严格脱敏资料；本地规则只约束草稿结构，不替代本院模板和上级审核。</p>
         <label className="purpose-field"><span>本次来院目的 <b>可选，但建议填写</b></span><input value={currentPurpose} onChange={(event) => setCurrentPurpose(event.target.value)} maxLength={160} placeholder="例如：继续治疗、复查评估、处理新出现的症状……" /><small>这行用于区分既往住院、出院计划与本次就诊。</small></label>
         <div className="image-actions" aria-label="资料文件输入"><label className="image-action camera-action">拍照<input type="file" accept="image/*" capture="environment" multiple onChange={chooseDocuments} /></label><label className="image-action">上传图片或 PDF<input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif,application/pdf,.pdf" multiple onChange={chooseDocuments} /></label><span>最多 {MAX_ITEMS} 个资料页；PDF 最多 {MAX_PDF_PAGES} 页；HEIC 会先在本机转换</span></div>
-        {uploads.length > 0 && <div className="upload-list">{uploads.map((item) => <div className={`upload-item ${item.status}`} key={item.id}>{item.preview ? <Image unoptimized src={item.preview} width={54} height={42} alt="待识别资料预览" /> : <span className="file-icon">PDF</span>}<span><strong>{item.name}</strong><small>{item.status === "recognizing" ? "正在用图像模型转录并填入下方…" : item.status === "done" ? `已由 ${item.model || "图像模型"} 转录，请核对文字` : item.error || "文件处理失败"}</small>{item.status === "error" && <button type="button" onClick={() => void retryUpload(item)}>重试本页</button>}</span></div>)}</div>}
+        {uploads.length > 0 && <div className="upload-list">{uploads.map((item) => <div className={`upload-item ${item.status}`} key={item.id}>{item.preview ? <Image unoptimized src={item.preview} width={54} height={42} alt="待识别资料预览" /> : <span className="file-icon">PDF</span>}<span><strong>{item.name}</strong><small>{item.status === "recognizing" ? "正在用图像模型提取入院关键资料…" : item.status === "done" ? `已由 ${item.model || "图像模型"} 提取关键资料，请核对` : item.error || "文件处理失败"}</small>{item.status === "error" && <button type="button" onClick={() => void retryUpload(item)}>重试本页</button>}</span></div>)}</div>}
         <textarea value={sourceText} onChange={(event) => { setSourceText(event.target.value); setError(""); }} placeholder="把外院病理、检查、手术和治疗经过，本次症状，已询问的病史，实际查体，以及医生明确写下的诊断/计划放在这里……" aria-label="患者资料" maxLength={MAX_SOURCE_CHARS} />
         <div className="input-footer"><label className="file-choice">选择文本文件<input type="file" accept=".txt,.md,.json,text/plain" onChange={chooseFile} /></label><span>{sourceText.length}/{MAX_SOURCE_CHARS}</span></div>
         {error && <p className="error-message" role="alert">{error}</p>}
