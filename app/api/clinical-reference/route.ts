@@ -1,5 +1,5 @@
 import { containsSensitiveIdentifier, parseModelJson, requestModel } from "../../../lib/model-api";
-import { ClinicalReferenceBundle, localReferenceChecks, parseClinicalReference, ReferenceCheck } from "../../../lib/clinical-reference";
+import { ClinicalReferenceBundle, localReferenceChecks, parseClinicalReference, ReferenceCheck, starterClinicalReference } from "../../../lib/clinical-reference";
 
 type Fact = { field?: unknown; value?: unknown; event_time?: unknown; event_type?: unknown; encounter_scope?: unknown; certainty?: unknown; source_ids?: unknown };
 
@@ -32,12 +32,15 @@ const parseChecks = (raw: string): ReferenceCheck[] => {
 export async function POST(request: Request) {
   try {
     const body = await request.json() as { action?: unknown; facts?: unknown; current_purpose?: unknown; reference?: unknown };
-    const action = body.action === "local" || body.action === "web" ? body.action : "generate";
+    const action = body.action === "starter" || body.action === "local" || body.action === "web" ? body.action : "generate";
     const facts = validFacts(body.facts);
     const currentPurpose = typeof body.current_purpose === "string" ? body.current_purpose.slice(0, 240) : "";
     const factsText = facts.map((fact) => String(fact.value)).join("；");
     if (!facts.length) return Response.json({ error: "缺少可追溯事实，暂时不能生成诊疗参考。" }, { status: 400 });
     if (containsSensitiveIdentifier(JSON.stringify({ facts, currentPurpose }))) return Response.json({ error: "检测到疑似身份证号或手机号，请脱敏后再生成。" }, { status: 400 });
+    const diagnosticFacts = facts.filter((fact) => /diagnosis|pathology/i.test(String(fact.field)) || /diagnosis|pathology|molecular/i.test(String(fact.event_type))).map((fact) => String(fact.value)).slice(0, 6);
+
+    if (action === "starter") return Response.json({ result: starterClinicalReference(factsText, diagnosticFacts) });
 
     if (action === "local") {
       const reference = body.reference as ClinicalReferenceBundle;
@@ -83,7 +86,7 @@ export async function POST(request: Request) {
       `本次来院目的：${currentPurpose || "未提供"}`,
       `结构化事实：${JSON.stringify(facts)}`,
     ].join("\n\n");
-    const result = parseClinicalReference(await requestModel(baseUrl, apiKey, "deepseek-v4-flash", prompt, { maxOutputTokens: 1800, timeoutMs: 75000 }), factsText);
+    const result = parseClinicalReference(await requestModel(baseUrl, apiKey, "deepseek-v4-flash", prompt, { maxOutputTokens: 1800, timeoutMs: 75000 }), factsText, diagnosticFacts);
     return Response.json({ result }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "诊疗参考暂时生成失败。";

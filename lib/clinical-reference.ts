@@ -9,7 +9,7 @@ export type ClinicalReferenceBundle = {
   missing_prerequisites: string[];
   suggested_workup: ReferencePathItem[];
   treatment_pathways: ReferencePathItem[];
-  verification_state: "model_only" | "local_checked" | "web_checked";
+  verification_state: "starter" | "model_only" | "local_checked" | "web_checked";
   disclaimer: string;
   checks?: ReferenceCheck[];
 };
@@ -32,17 +32,36 @@ export const defaultReferenceDiagnosis = (factsText: string) => /黑色素瘤|me
   ? "黑色素瘤（现有资料已提示；原发部位、病理亚型及临床分期待补）"
   : "肿瘤相关诊断（具体病种、部位、病理及分期待医生结合原始资料确认）";
 
-export function parseClinicalReference(raw: string, factsText: string): ClinicalReferenceBundle {
+export function starterClinicalReference(factsText: string, diagnosticFacts: string[]): ClinicalReferenceBundle {
+  return {
+    preliminary_diagnosis: defaultReferenceDiagnosis(factsText),
+    diagnostic_basis: diagnosticFacts.length ? diagnosticFacts.map((fact) => `现有资料记载：${fact}`) : ["现有结构化事实尚不足以形成诊断依据摘要"],
+    differential_diagnosis: ["若病理原文、取材代表性或诊断一致性存在疑问，先由病理科复核是否需要鉴别其他色素性病变或不同原发类型"],
+    missing_prerequisites: ["原发部位、发现及取材方式", "完整病理报告及关键参数", "区域淋巴结和远处转移分期资料", "既往处理、体能状态及合并症"],
+    suggested_workup: [
+      { title: "复核完整病理与免疫组化原文", trigger: "当前只有确诊摘要或报告内容不全", purpose: "补齐病理类型、Breslow厚度、溃疡、切缘及其他影响分期和讨论路径的参数" },
+      { title: "补充原发灶、全身皮肤及区域淋巴结评估", trigger: "原发部位或实际查体尚未明确", purpose: "明确原发灶、卫星/移行相关皮损及区域淋巴结情况" },
+      { title: "按分期线索选择影像评估", trigger: "当前区域淋巴结或远处转移资料不足，或症状/查体提示需要评估", purpose: "结合已有检查，在区域淋巴结超声、胸部CT、腹盆部增强CT/MRI、骨或中枢评估等候选中选择" },
+      { title: "评估BRAF、c-KIT、NRAS等分子资料", trigger: "进入需要依据分子状态讨论系统治疗的临床情境，且既往结果未提供", purpose: "为后续靶向或系统治疗分层讨论提供依据" },
+    ],
+    treatment_pathways: [
+      { title: "局限且可切除路径", trigger: "完整病理和分期支持局限、可切除时", purpose: "进入原发灶手术范围及区域淋巴结管理的多学科评估" },
+      { title: "高风险术后路径", trigger: "已完成切除且病理/分期提示较高复发风险时", purpose: "结合分期、分子状态和患者情况讨论辅助治疗与随访方向" },
+      { title: "不可切除或转移性路径", trigger: "经影像、病理和上级医师确认不可切除或远处转移时", purpose: "结合分子状态、既往治疗、体能和器官功能讨论系统治疗及局部处理方向" },
+    ],
+    verification_state: "starter",
+    disclaimer: "内置来源卡生成的快速参考；尚未按患者完整资料核验，不可直接作为医嘱或最终诊疗决定。",
+  };
+}
+
+export function parseClinicalReference(raw: string, factsText: string, diagnosticFacts: string[]): ClinicalReferenceBundle {
   const value = parseModelJson(raw) as Partial<ClinicalReferenceBundle>;
-  let preliminary = typeof value.preliminary_diagnosis === "string" ? value.preliminary_diagnosis.trim() : "";
-  const stageMention = preliminary.match(/(?:[ⅠⅡⅢⅣIVX]{1,4}|[0-4]期|转移)/g)?.join(" ") || "";
-  if (!preliminary || (stageMention && !factsText.includes(stageMention))) preliminary = defaultReferenceDiagnosis(factsText);
   const suggestedWorkup = pathItems(value.suggested_workup);
   const treatmentPathways = pathItems(value.treatment_pathways);
   if (suggestedWorkup.length < 2 || treatmentPathways.length < 2) throw new Error("模型没有生成足够完整的条件性参考路径");
   return {
-    preliminary_diagnosis: preliminary,
-    diagnostic_basis: strings(value.diagnostic_basis),
+    preliminary_diagnosis: defaultReferenceDiagnosis(factsText),
+    diagnostic_basis: diagnosticFacts.length ? diagnosticFacts.map((fact) => `现有资料记载：${fact}`) : strings(value.diagnostic_basis),
     differential_diagnosis: strings(value.differential_diagnosis, 5),
     missing_prerequisites: strings(value.missing_prerequisites),
     suggested_workup: suggestedWorkup,

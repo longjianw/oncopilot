@@ -289,9 +289,20 @@ test("generates a useful conditional clinical reference without executable presc
   const body = await response.json();
   assert.equal(body.result.verification_state, "model_only");
   assert.match(body.result.preliminary_diagnosis, /黑色素瘤/);
+  assert.doesNotMatch(body.result.preliminary_diagnosis, /皮肤|黏膜|眼/);
   assert.ok(body.result.suggested_workup.length >= 3);
   assert.ok(body.result.treatment_pathways.length >= 2);
   assert.doesNotMatch(JSON.stringify(body.result), /每日|每次|mg|静滴/);
+});
+
+test("returns the source-card starter before waiting for model enrichment", async () => {
+  const response = await clinicalReferenceWithMockModel("starter");
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.result.verification_state, "starter");
+  assert.match(body.result.preliminary_diagnosis, /原发部位.*待补/);
+  assert.ok(body.result.suggested_workup.length >= 4);
+  assert.ok(body.result.treatment_pathways.length >= 3);
 });
 
 test("cross-checks the generated reference against the local CSCO source card", async () => {

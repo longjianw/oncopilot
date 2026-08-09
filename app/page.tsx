@@ -293,8 +293,13 @@ export default function Home() {
   };
 
   const generateClinicalReference = async (result: AnalysisResult) => {
-    setReferenceLoading(true); setReferenceNotice(""); setClinicalReference(null);
+    setReferenceLoading(true); setReferenceNotice("");
     try {
+      if (!clinicalReference) {
+        const starterResponse = await fetch("/api/clinical-reference", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "starter", facts: result.facts, current_purpose: currentPurpose }) });
+        const starterPayload = await starterResponse.json() as { result?: ClinicalReferenceBundle; error?: string };
+        if (starterResponse.ok && starterPayload.result) setClinicalReference(starterPayload.result);
+      }
       const response = await fetch("/api/clinical-reference", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "generate", facts: result.facts, current_purpose: currentPurpose }) });
       const payload = await response.json() as { result?: ClinicalReferenceBundle; error?: string };
       if (!response.ok || !payload.result) throw new Error(payload.error || "AI参考暂时没有生成出来。");
@@ -429,7 +434,7 @@ export default function Home() {
         <div className="reference-heading"><div><span>诊断与下一步 · AI参考候选</span><h2>先快速给一版，再用资料和网络交叉核验</h2><p>这里允许AI提出有条件的检查和分层诊疗方向；它与正式病历分开，只有医生主动采纳后才进入诊断/计划整理。</p></div><div className="reference-actions"><button type="button" disabled={referenceLoading} onClick={() => generateClinicalReference(draft)}>{referenceLoading ? "正在快速生成…" : "重新生成AI参考"}</button><button type="button" disabled={!clinicalReference || Boolean(verificationLoading)} onClick={() => verifyClinicalReference("local")}>{verificationLoading === "local" ? "本地核验中…" : "用CSCO来源卡核验"}</button><button type="button" disabled={!clinicalReference || Boolean(verificationLoading)} onClick={() => verifyClinicalReference("web")}>{verificationLoading === "web" ? "联网核验中…" : "联网核验权威网页"}</button></div></div>
         {referenceLoading && <div className="reference-loading"><i className="spinner" /> 正在根据结构化事实生成初步诊断、候选检查和分层诊疗路径……</div>}
         {clinicalReference && <div className="reference-content">
-          <div className="reference-state"><strong>{clinicalReference.verification_state === "model_only" ? "模型初稿 · 未核验" : clinicalReference.verification_state === "local_checked" ? "已用本地来源卡核验" : "已联网读取权威网页核验"}</strong><span>{clinicalReference.disclaimer}</span></div>
+          <div className="reference-state"><strong>{clinicalReference.verification_state === "starter" ? "内置来源卡 · 快速初稿" : clinicalReference.verification_state === "model_only" ? "AI深化初稿 · 未交叉核验" : clinicalReference.verification_state === "local_checked" ? "已用本地来源卡核验" : "已联网读取权威网页核验"}</strong><span>{clinicalReference.disclaimer}</span></div>
           <div className="reference-grid"><article><h3>初步诊断与依据</h3><p><b>初步诊断：</b>{clinicalReference.preliminary_diagnosis}</p><p><b>诊断依据：</b>{clinicalReference.diagnostic_basis.join("；") || "待补"}</p><p><b>鉴别诊断：</b>{clinicalReference.differential_diagnosis.join("；") || "待医生确认"}</p><button type="button" onClick={() => adoptReference("diagnosis_summary")}>填入诊断整理</button></article><article><h3>尚缺关键前提</h3><ul>{clinicalReference.missing_prerequisites.map((item) => <li key={item}>{item}</li>)}</ul></article></div>
           <div className="reference-paths"><article><h3>候选检查与评估</h3>{clinicalReference.suggested_workup.map((item) => <div key={`${item.title}-${item.trigger}`}><strong>{item.title}</strong><span>何时考虑：{item.trigger}</span><small>目的：{item.purpose}</small></div>)}</article><article><h3>分层诊疗方向</h3>{clinicalReference.treatment_pathways.map((item) => <div key={`${item.title}-${item.trigger}`}><strong>{item.title}</strong><span>适用前提：{item.trigger}</span><small>讨论目的：{item.purpose}</small></div>)}</article></div>
           <button type="button" className="adopt-plan" onClick={() => adoptReference("plan_summary")}>把候选路径填入计划整理</button>
