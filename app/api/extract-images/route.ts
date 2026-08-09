@@ -60,7 +60,7 @@ export async function POST(request: Request) {
     if (!apiKey) return Response.json({ error: "图片识别服务尚未配置。请先配置服务端密钥。" }, { status: 503 });
 
     const hasSeparateVisionService = Boolean(process.env.ARK_VISION_BASE_URL);
-    const model = process.env.ARK_VISION_MODEL || "doubao-seed-2.0-code";
+    const model = process.env.ARK_VISION_MODEL || "doubao-seed-2.1-turbo";
     const baseUrl = (process.env.ARK_VISION_BASE_URL || process.env.ARK_CODING_BASE_URL || "https://ark.cn-beijing.volces.com/api/coding/v3").replace(/\/$/, "");
     const dataUrls = await Promise.all((images as File[]).map(async (image) => {
       const bytes = new Uint8Array(await image.arrayBuffer());
@@ -80,13 +80,13 @@ export async function POST(request: Request) {
     ];
     const requestBody = hasSeparateVisionService
       ? { model, temperature: 0, messages: [{ role: "user", content: responseContent }] }
-      : { model, input: [{ role: "user", content: responseContent }], max_output_tokens: 3200 };
+      : { model, input: [{ role: "user", content: responseContent }], thinking: { type: "disabled" }, max_output_tokens: 1800 };
 
     const upstream = await fetch(`${baseUrl}/${hasSeparateVisionService ? "chat/completions" : "responses"}`, {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify(requestBody),
-      signal: AbortSignal.timeout(75000),
+      signal: AbortSignal.timeout(50000),
     });
     if (!upstream.ok) throw new Error(`视觉模型请求失败：${upstream.status}`);
     const data = await upstream.json() as VisionResponse;
@@ -96,7 +96,7 @@ export async function POST(request: Request) {
     return Response.json({ pages, model, method: "batched_vision_transcription" }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     const message = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")
-      ? "这一批超过75秒仍未完成，请只重试这一批中的失败页。"
+      ? "这一批超过50秒仍未完成，请只重试这一批中的失败页。"
       : "这一批未完整返回，请只重试失败页。";
     return Response.json({ error: message }, { status: 502, headers: { "Cache-Control": "no-store" } });
   }

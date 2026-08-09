@@ -19,12 +19,10 @@ type PreparedInput = { name: string; file: File; preview?: string };
 
 const MAX_ITEMS = 20;
 const MAX_PDF_PAGES = 20;
-const MAX_UPLOAD_BYTES = 780_000;
-const MAX_EDGE = 1800;
+const MAX_UPLOAD_BYTES = 480_000;
+const MAX_EDGE = 1600;
 const MAX_SOURCE_CHARS = 32_000;
-const VISION_BATCH_SIZE = 2;
-const VISION_BATCH_BYTES = 850_000;
-const VISION_BATCH_CONCURRENCY = 2;
+const RECOGNITION_CONCURRENCY = 3;
 
 const sectionLabels: Array<{ field: DraftField; label: string; hint: string; placeholder: string; large?: boolean }> = [
   { field: "chief_complaint", label: "主诉", hint: "疾病或主要症状 + 时间 + 本次目的", placeholder: "可在上方点选候选项，也可直接输入" },
@@ -379,30 +377,6 @@ export default function Home() {
     if (heading) setSourceText((current) => current.trim() ? `${current.trim()}\n\n${heading}` : heading);
   };
 
-  const recognizeBatch = async (batch: Array<PreparedInput & { id: string }>) => {
-    try {
-      const formData = new FormData();
-      batch.forEach((input) => formData.append("images", input.file));
-      const response = await fetch("/api/extract-images", { method: "POST", body: formData });
-      const raw = await response.text();
-      let payload: { pages?: Array<{ index: number; text: string }>; model?: string; error?: string } = {};
-      try { payload = JSON.parse(raw); } catch { /* fall back to single pages below */ }
-      if (!response.ok || !payload.pages || payload.pages.length !== batch.length) throw new Error(payload.error || "批量识别未完整返回");
-      const headings = payload.pages.map((page) => {
-        const input = batch[page.index - 1];
-        if (!input || !page.text.trim()) return null;
-        updateUpload(input.id, { status: "done", model: payload.model });
-        return `【${input.name}｜视觉提取关键资料，待核对】\n${page.text.trim()}`;
-      }).filter((heading): heading is string => Boolean(heading));
-      if (headings.length !== batch.length) throw new Error("批量识别遗漏页面");
-      return headings;
-    } catch (caught) {
-      const message = caught instanceof Error ? caught.message : "这一批资料未完成，请只重试失败页。";
-      batch.forEach((input) => updateUpload(input.id, { status: "error", error: message }));
-      return [];
-    }
-  };
-
   const chooseDocuments = async (event: ChangeEvent<HTMLInputElement>) => {
     const selected = Array.from(event.target.files || []); event.target.value = "";
     if (!selected.length) return;
@@ -423,19 +397,21 @@ export default function Home() {
       }
       const identified = prepared.map((input) => ({ ...input, id: crypto.randomUUID() }));
       setUploads((items) => [...items, ...identified.map((input) => ({ id: input.id, name: input.name, file: input.file, preview: input.preview, status: "recognizing" as const }))]);
-      const batches: Array<Array<PreparedInput & { id: string }>> = [];
-      for (const input of identified) {
-        const current = batches.at(-1);
-        const currentBytes = current?.reduce((sum, item) => sum + item.file.size, 0) || 0;
-        if (!current || current.length >= VISION_BATCH_SIZE || currentBytes + input.file.size > VISION_BATCH_BYTES) batches.push([input]);
-        else current.push(input);
-      }
-      const headings: string[] = [];
-      for (let offset = 0; offset < batches.length; offset += VISION_BATCH_CONCURRENCY) {
-        const wave = batches.slice(offset, offset + VISION_BATCH_CONCURRENCY);
-        headings.push(...(await Promise.all(wave.map((batch) => recognizeBatch(batch)))).flat());
-      }
-      if (headings.length) setSourceText((current) => current.trim() ? `${current.trim()}\n\n${headings.join("\n\n")}` : headings.join("\n\n"));
+      const baseText = sourceText.trim();
+      const results: Array<string | null> = Array(identified.length).fill(null);
+      let nextIndex = 0;
+      const runWorker = async () => {
+        while (nextIndex < identified.length) {
+          const index = nextIndex++;
+          const input = identified[index];
+          const heading = await recognize(input, input.id);
+          if (!heading) continue;
+          results[index] = heading;
+          const extracted = results.filter((value): value is string => Boolean(value)).join("\n\n");
+          setSourceText(baseText ? `${baseText}\n\n${extracted}` : extracted);
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(RECOGNITION_CONCURRENCY, identified.length) }, runWorker));
     } catch (caught) { setError(caught instanceof Error ? caught.message : "文件处理失败，请重试。"); }
   };
 
