@@ -201,7 +201,7 @@ export function buildGuidedDraft(extraction: FactExtraction, evidenceDraft: Admi
   const evidenceText = [extraction.current_purpose, ...extraction.facts.map((fact) => fact.value)].filter(Boolean).join(" ");
   const melanoma = /黑色素瘤|melanoma/i.test(evidenceText);
   const hasType = (type: string) => extraction.facts.some((fact) => fact.event_type === type);
-  const lowInformation = extraction.facts.length <= 8 || evidenceDraft.present_illness.trim().length < 180;
+  const lowInformation = extraction.facts.length <= 8 && evidenceDraft.present_illness.trim().length < 120;
   let presentIllness = evidenceDraft.present_illness;
 
   if (lowInformation && melanoma) {

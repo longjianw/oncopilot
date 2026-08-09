@@ -16,7 +16,8 @@ const localBindingConfig = {
   compatibility_flags: ["nodejs_compat"],
   vars: {
     ARK_CODING_API_KEY: process.env.ARK_CODING_API_KEY ?? "",
-    ARK_CODING_MODEL: process.env.ARK_CODING_MODEL ?? "deepseek-v4-flash",
+    ARK_CODING_MODEL: process.env.ARK_CODING_MODEL ?? "deepseek-v4-pro",
+    ARK_REFERENCE_MODEL: process.env.ARK_REFERENCE_MODEL ?? "deepseek-v4-pro",
     ARK_CODING_BASE_URL: process.env.ARK_CODING_BASE_URL ?? "https://ark.cn-beijing.volces.com/api/coding/v3",
   },
   d1_databases: d1

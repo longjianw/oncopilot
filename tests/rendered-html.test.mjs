@@ -111,7 +111,10 @@ async function analyzeWithMockModel() {
   ];
   const originalFetch = globalThis.fetch;
   let calls = 0;
-  globalThis.fetch = async () => new Response(JSON.stringify({ output_text: JSON.stringify(responses[calls++]) }), { status: 200 });
+  globalThis.fetch = async (_url, init) => {
+    assert.equal(JSON.parse(init.body).model, "deepseek-v4-pro");
+    return new Response(JSON.stringify({ output_text: JSON.stringify(responses[calls++]) }), { status: 200 });
+  };
   try {
     const response = await worker.fetch(
       new Request("http://localhost/api/analyze", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ source_text: "【S1 完全合成资料】患者已确诊黑色素瘤3天，免疫组化已完成，具体结果未提供。", current_purpose: "进一步抗肿瘤治疗" }) }),
@@ -160,6 +163,38 @@ async function analyzePriorDischargeDiagnosisWithMockModel() {
   } finally { globalThis.fetch = originalFetch; }
 }
 
+async function analyzeWithContaminatedModelDraft() {
+  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
+  workerUrl.searchParams.set("contaminated-draft-test", `${process.pid}-${Date.now()}`);
+  const { default: worker } = await import(workerUrl.href);
+  const responses = [
+    {
+      current_purpose: "进一步评估",
+      sources: [{ source_id: "S1", title: "完全合成纵隔肿瘤资料", evidence: "既往治疗后复发，近期出现血细胞减少" }],
+      facts: [
+        { fact_id: "F1", field: "diagnosis", value: "纵隔来源肿瘤治疗后复发", event_time: "6年前至近期", event_type: "onset_diagnosis", encounter_scope: "prior", certainty: "explicit", source_ids: ["S1"] },
+        { fact_id: "F2", field: "current_status", value: "近期发现血细胞减少", event_time: "近期", event_type: "current_status", encounter_scope: "current", certainty: "explicit", source_ids: ["S1"] },
+      ],
+      pending_fields: [],
+    },
+    {
+      chief_complaint: "### 入院诊断【病程时间待补】，**本次入院目的**：进一步评估",
+      present_illness: "### 入院诊断；**确诊经过**：纵隔肿瘤。**住院治疗**：既往治疗后出院。**治疗计划**：进一步处理。",
+      past_history: "", personal_history: "", family_history: "", allergy_history: "", specialist_exam: "", diagnosis_summary: "", plan_summary: "", pending_fields: [],
+    },
+  ];
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => new Response(JSON.stringify({ output_text: JSON.stringify(responses[calls++]) }), { status: 200 });
+  try {
+    return await worker.fetch(
+      new Request("http://localhost/api/analyze", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ source_text: "完全合成纵隔肿瘤资料：既往治疗后复发，近期发现血细胞减少。", current_purpose: "进一步评估" }) }),
+      { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) }, ARK_CODING_API_KEY: "synthetic-test-key" },
+      { waitUntil() {}, passThroughOnException() {} },
+    );
+  } finally { globalThis.fetch = originalFetch; }
+}
+
 async function analyzeWithRuleFallback() {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("rule-fallback-test", `${process.pid}-${Date.now()}`);
@@ -168,7 +203,11 @@ async function analyzeWithRuleFallback() {
   globalThis.fetch = async (_url, init) => {
     const prompt = JSON.parse(init.body).input;
     if (prompt.includes("结构化事实抽取器")) return new Response(JSON.stringify({ output_text: "{}" }), { status: 200 });
-    return new Response("upstream unavailable", { status: 504 });
+    return new Response(JSON.stringify({ output_text: JSON.stringify({
+      chief_complaint: "胸腺肿瘤诊疗后复发，近期发现中性粒细胞降低，入院进一步评估",
+      present_illness: "患者6年前因前纵隔占位就诊，后接受胸腺肿瘤切除及术后放疗，具体治疗时间和疗效待核对。既往记录提示肿瘤复发，相关病理及影像原文仍需结合来源复核。近期血常规提示中性粒细胞降低，当前伴随症状、生命体征及器官功能资料尚未完整提供。本次为进一步评估肿瘤状态、明确血细胞异常相关情况并衔接后续诊疗入院。",
+      past_history: "", personal_history: "", family_history: "", allergy_history: "", specialist_exam: "", diagnosis_summary: "", plan_summary: "", pending_fields: [],
+    }) }), { status: 200 });
   };
   try {
     return await worker.fetch(
@@ -310,11 +349,14 @@ async function clinicalReferenceWithMockModel(action = "generate") {
     ],
   };
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (url) => {
+  globalThis.fetch = async (url, init) => {
     if (action === "web") {
       if (String(url).includes("cancer.gov")) return new Response("Melanoma Stage I Stage II Stage III Stage IV Treatment Option Overview surgery immunotherapy targeted therapy BRAF", { status: 200 });
       return new Response("黑色素瘤诊疗指南", { status: 200 });
     }
+    const requestBody = JSON.parse(init.body);
+    assert.equal(requestBody.model, "deepseek-v4-pro");
+    assert.equal(requestBody.max_output_tokens, 5200);
     return new Response(JSON.stringify({ output_text: JSON.stringify(generated) }), { status: 200 });
   };
   const facts = [{ fact_id: "F1", field: "diagnosis", value: "确诊黑色素瘤3天", event_time: "3天前", event_type: "onset_diagnosis", encounter_scope: "prior", certainty: "explicit", source_ids: ["S1"] }];
@@ -322,6 +364,35 @@ async function clinicalReferenceWithMockModel(action = "generate") {
   try {
     return await worker.fetch(
       new Request("http://localhost/api/clinical-reference", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action, facts, current_purpose: "进一步评估", ...((action === "local" || action === "web") ? { reference } : {}) }) }),
+      { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) }, ARK_CODING_API_KEY: "synthetic-test-key" },
+      { waitUntil() {}, passThroughOnException() {} },
+    );
+  } finally { globalThis.fetch = originalFetch; }
+}
+
+async function clinicalReferenceWithUnsupportedStage() {
+  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
+  workerUrl.searchParams.set("reference-certainty-test", `${process.pid}-${Date.now()}`);
+  const { default: worker } = await import(workerUrl.href);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ output_text: JSON.stringify({
+    preliminary_diagnosis: "胸腺肿瘤复发伴胸膜转移，IV期",
+    diagnostic_basis: ["胸膜结节提示胸腺肿瘤复发"],
+    differential_diagnosis: [],
+    missing_prerequisites: ["完整病理及分期资料"],
+    suggested_workup: [
+      { title: "复核病理", trigger: "原始报告未提供", purpose: "核对病理类型" },
+      { title: "复核影像", trigger: "当前分期未明确", purpose: "明确病灶范围" },
+    ],
+    treatment_pathways: [
+      { title: "当前问题评估", trigger: "感染风险未明确时", purpose: "先评估当前风险" },
+      { title: "肿瘤路径讨论", trigger: "资料补齐并由上级确认后", purpose: "讨论后续方向" },
+    ],
+  }) }), { status: 200 });
+  const facts = [{ fact_id: "F1", field: "diagnosis", value: "胸膜结节穿刺病理支持胸腺肿瘤复发", event_time: "近期", event_type: "onset_diagnosis", encounter_scope: "prior", certainty: "explicit", source_ids: ["S1"] }];
+  try {
+    return await worker.fetch(
+      new Request("http://localhost/api/clinical-reference", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "generate", facts, current_purpose: "进一步评估" }) }),
       { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) }, ARK_CODING_API_KEY: "synthetic-test-key" },
       { waitUntil() {}, passThroughOnException() {} },
     );
@@ -378,13 +449,15 @@ test("renders the single-entry admission draft package workflow", async () => {
   assert.doesNotMatch(pageSource, /补充记录：/);
   assert.match(pageSource, /插入医生确认大纲/);
   assert.match(pageSource, /诊断与下一步 · AI参考候选/);
-  assert.match(pageSource, /用CSCO来源卡核验/);
+  assert.match(pageSource, /核验已接入来源卡/);
   assert.match(pageSource, /联网核验权威网页/);
   assert.match(pageSource, /填入初步诊断整理/);
   assert.match(pageSource, /AI先按现有资料给候选/);
   assert.match(pageSource, /系统不会生成出院诊断/);
   assert.match(pageSource, /applyAutomaticReference/);
-  assert.match(pageSource, /AI深化暂未返回，已保留快速候选/);
+  assert.match(pageSource, /不再先显示通用内置答案/);
+  assert.doesNotMatch(pageSource, /action: "starter"/);
+  assert.match(pageSource, /V4 Pro生成中/);
   assert.match(pageSource, /把候选路径填入计划整理/);
   assert.match(pageSource, /正在用图像模型提取入院关键资料/);
   assert.match(pageSource, /重试本页/);
@@ -395,7 +468,8 @@ test("renders the single-entry admission draft package workflow", async () => {
   assert.match(pageSource, /setSourceText\(baseText/);
   assert.match(pageSource, /正在分段核对事实并生成草稿/);
   assert.match(pageSource, /未提取到可靠事实，仅保留在来源与待核对区/);
-  assert.match(pageSource, /连贯合成未完成/);
+  assert.match(pageSource, /模型未完成时会明确提示重试/);
+  assert.doesNotMatch(pageSource, /连贯合成未完成/);
   assert.doesNotMatch(html, /进入管床/);
   assert.doesNotMatch(html, /合成患者 A02/);
   assert.doesNotMatch(html, /codex-preview/);
@@ -475,18 +549,27 @@ test("keeps prior discharge diagnoses out of the current admission diagnosis sec
   assert.match(prompts[1], /不得输出‘出院诊断’/);
 });
 
+test("rejects markdown headings and source module labels instead of showing them as a draft", async () => {
+  const response = await analyzeWithContaminatedModelDraft();
+  assert.equal(response.status, 502, await response.clone().text());
+  const body = await response.json();
+  assert.match(body.error, /质量门禁|未展示规则拼接草稿/);
+  assert.equal(body.result, undefined);
+});
+
 test("extracts useful rule-bound facts when long-text model extraction fails", async () => {
   const response = await analyzeWithRuleFallback();
   assert.equal(response.status, 200, await response.clone().text());
   const body = await response.json();
   assert.equal(body.rule_fallback_count, 1);
   assert.equal(body.raw_fallback_count, 0);
-  assert.equal(body.processing_status, "draft_fallback");
+  assert.equal(body.processing_status, "model_generated");
   assert.ok(body.result.facts.some((fact) => fact.field === "prior_record_diagnosis" && fact.encounter_scope === "prior"));
   assert.ok(body.result.facts.some((fact) => fact.event_type === "prior_treatment"));
   assert.match(body.result.chief_complaint, /胸腺肿瘤/);
   assert.doesNotMatch(body.result.chief_complaint, /疾病或主要症状待补/);
   assert.match(body.result.present_illness, /粒细胞缺乏|胸腺肿瘤|中性粒细胞/);
+  assert.doesNotMatch(body.result.present_illness, /首次发病或发现时间|待通过下方选项补全/);
   assert.doesNotMatch(body.result.present_illness, /AI连贯合成未完成|已核验事实顺序稿/);
 });
 
@@ -504,29 +587,22 @@ test("segments long multi-page source text before fact extraction and merges the
   assert.ok(body.result.facts.filter((fact) => fact.fact_id !== "F-PURPOSE").every((fact) => /^C\d+-F1$/.test(fact.fact_id)));
 });
 
-test("returns a fact-bound fallback draft when long-source prose generation fails", async () => {
+test("returns an error instead of a program-built draft when long-source prose generation fails", async () => {
   const { response, extractionCalls, draftCalls } = await analyzeLongSourceWithMockModel(true);
-  assert.equal(response.status, 200, await response.clone().text());
+  assert.equal(response.status, 502, await response.clone().text());
   const body = await response.json();
-  assert.equal(body.processing_status, "draft_fallback");
   assert.ok(extractionCalls >= 2);
   assert.equal(draftCalls, 1);
-  assert.match(body.result.present_illness, /首发或确诊时间/);
-  assert.match(body.result.present_illness, /本次因进一步评估入院/);
-  assert.doesNotMatch(body.result.present_illness, /AI连贯合成未完成|已核验事实顺序稿/);
-  assert.doesNotMatch(body.result.present_illness, /高血压|糖尿病|转移/);
+  assert.match(body.error, /未展示规则拼接草稿|重试/);
+  assert.equal(body.result, undefined);
 });
 
-test("keeps raw unparsed reports outside chief complaint and present illness", async () => {
+test("does not expose raw unparsed reports when prose generation also fails", async () => {
   const { response } = await analyzeLongSourceWithMockModel(true, true);
-  assert.equal(response.status, 200, await response.clone().text());
+  assert.equal(response.status, 502, await response.clone().text());
   const body = await response.json();
-  assert.equal(body.processing_status, "draft_fallback");
-  assert.equal(body.fact_fallback_count, body.chunk_count);
-  assert.match(body.result.chief_complaint, /疾病或主要症状待补/);
-  assert.match(body.result.chief_complaint, /病程时间待补/);
-  assert.match(body.result.present_illness, /首发或确诊时间、发现方式及诊断经过待补/);
-  assert.doesNotMatch(body.result.present_illness, /完全合成检查摘要|视觉转录|###|AI连贯合成未完成|已核验事实顺序稿/);
+  assert.equal(body.result, undefined);
+  assert.doesNotMatch(JSON.stringify(body), /完全合成检查摘要|视觉转录|###|已核验事实顺序稿/);
 });
 
 test("keeps unparsed long-source segments as pending source-bound facts", async () => {
@@ -587,28 +663,20 @@ test("generates a useful conditional clinical reference without executable presc
   assert.doesNotMatch(JSON.stringify(body.result), /每日|每次|mg|静滴/);
 });
 
-test("returns the source-card starter before waiting for model enrichment", async () => {
-  const response = await clinicalReferenceWithMockModel("starter");
-  assert.equal(response.status, 200);
+test("returns an error instead of a generic built-in reference when V4 Pro is empty", async () => {
+  const response = await clinicalReferenceFallbackWithPriorDiagnosis();
+  assert.equal(response.status, 502, await response.clone().text());
   const body = await response.json();
-  assert.equal(body.result.verification_state, "starter");
-  assert.match(body.result.preliminary_diagnosis, /原发部位.*待补/);
-  assert.ok(body.result.suggested_workup.length >= 4);
-  assert.ok(body.result.treatment_pathways.length >= 3);
+  assert.match(body.error, /V4 Pro.*未展示通用套话/);
+  assert.equal(body.result, undefined);
 });
 
-test("returns a specific fast reference instead of an error when model enrichment is empty", async () => {
-  const response = await clinicalReferenceFallbackWithPriorDiagnosis();
-  assert.equal(response.status, 200, await response.clone().text());
+test("rejects an unsupported stage or metastasis claim in the model reference", async () => {
+  const response = await clinicalReferenceWithUnsupportedStage();
+  assert.equal(response.status, 502, await response.clone().text());
   const body = await response.json();
-  assert.equal(body.degraded, true);
-  assert.match(body.warning, /已保留快速候选/);
-  assert.match(body.result.preliminary_diagnosis, /粒细胞缺乏/);
-  assert.match(body.result.preliminary_diagnosis, /肺部感染/);
-  assert.match(body.result.preliminary_diagnosis, /胸腺肿瘤/);
-  assert.ok(body.result.suggested_workup.length >= 3);
-  assert.ok(body.result.treatment_pathways.length >= 3);
-  assert.doesNotMatch(JSON.stringify(body.result), /Breslow|BRAF|c-KIT|NRAS/);
+  assert.match(body.error, /未展示通用套话/);
+  assert.equal(body.result, undefined);
 });
 
 test("cross-checks the generated reference against the local CSCO source card", async () => {

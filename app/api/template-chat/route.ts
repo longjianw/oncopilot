@@ -34,7 +34,7 @@ export async function POST(request: Request) {
     const history = validHistory(body.history) ? body.history.slice(-6) : [];
     const templateName = typeof body.template_name === "string" ? body.template_name.slice(0, 120) : "肿瘤入院病史模板";
     const itemContext = typeof body.item_context === "string" ? body.item_context.slice(0, 600) : "未指定具体核对项";
-    const requestedModel = typeof body.model === "string" ? body.model : "deepseek-v4-flash";
+    const requestedModel = typeof body.model === "string" ? body.model : "deepseek-v4-pro";
     if (!message || message.length > 1200) return Response.json({ error: "请输入一个简短的文书核对问题。" }, { status: 400 });
     if (!chatModels.includes(requestedModel as ChatModel)) return Response.json({ error: "不支持的模型，请选择快速或深入模式。" }, { status: 400 });
     const privacyText = JSON.stringify({ message, history });

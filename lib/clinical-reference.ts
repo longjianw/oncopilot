@@ -9,7 +9,7 @@ export type ClinicalReferenceBundle = {
   missing_prerequisites: string[];
   suggested_workup: ReferencePathItem[];
   treatment_pathways: ReferencePathItem[];
-  verification_state: "starter" | "model_only" | "local_checked" | "web_checked";
+  verification_state: "model_only" | "local_checked" | "web_checked";
   disclaimer: string;
   checks?: ReferenceCheck[];
 };
@@ -24,72 +24,36 @@ const pathItems = (value: unknown, limit = 8): ReferencePathItem[] => Array.isAr
   const title = typeof candidate.title === "string" ? candidate.title.trim() : "";
   const trigger = typeof candidate.trigger === "string" ? candidate.trigger.trim() : "";
   const purpose = typeof candidate.purpose === "string" ? candidate.purpose.trim() : "";
-  if (!title || !trigger || !purpose || /(?:\d+(?:\.\d+)?\s*(?:mg|g|ml)|每日|每次|静滴|口服)/i.test(`${title}${purpose}`)) return [];
+  if (!title || !trigger || !purpose || /(?:\d+(?:\.\d+)?\s*(?:mg|g|ml)|每日|每次|静滴|口服)/i.test(`${title}${trigger}${purpose}`)) return [];
   return [{ title, trigger, purpose }];
 }).slice(0, limit) : [];
 
-const diagnosisItems = (diagnosticFacts: string[]) => [...new Set(diagnosticFacts.flatMap((fact) => fact
-  .replace(/既往住院记录明确诊断\s*[:：]?/g, "")
-  .replace(/(?:入院|出院|初步|目前|当前)诊断\s*[:：]?/g, "")
-  .split(/[；;\n]|(?=\d+[.、])/)
-  .map((item) => item.replace(/^\s*\d+[.、]\s*/, "").trim())
-  .filter((item) => item.length >= 2 && item.length <= 100 && /癌|瘤|白血病|淋巴瘤|感染|缺乏|减少|贫血|转移|复发|综合征|疾病|病变/.test(item))))].slice(0, 6);
-
-export const defaultReferenceDiagnosis = (factsText: string, diagnosticFacts: string[] = []) => {
-  if (/黑色素瘤|melanoma/i.test(factsText)) return "黑色素瘤（现有资料已提示；原发部位、病理亚型及临床分期待补）";
-  const candidates = diagnosisItems(diagnosticFacts);
-  return candidates.length
-    ? `${candidates.join("；")}（依据现有资料整理，需结合本次入院情况及原始报告核对）`
-    : "肿瘤相关诊断（具体病种、部位、病理及分期待结合原始资料补充）";
+const unsupportedDiagnosticCertainty = (diagnosticText: string, evidenceText: string) => {
+  const unsupportedTerms = ["转移", "化疗"];
+  if (unsupportedTerms.some((term) => diagnosticText.includes(term) && !evidenceText.includes(term))) return true;
+  const stages = diagnosticText.match(/(?:IV|III|II|I|Ⅳ|Ⅲ|Ⅱ|Ⅰ|[1-4])\s*期/gi) || [];
+  return stages.some((stage) => !evidenceText.toUpperCase().includes(stage.toUpperCase().replace(/\s+/g, "")));
 };
 
-export function starterClinicalReference(factsText: string, diagnosticFacts: string[]): ClinicalReferenceBundle {
-  const melanoma = /黑色素瘤|melanoma/i.test(factsText);
-  const generalMissing = ["本次主要问题、来院目的及当前症状", "原发肿瘤病理、分期和目前疾病状态", "既往治疗、疗效及最近一次治疗时间", "ECOG PS、重要合并症和器官功能"];
-  const generalWorkup: ReferencePathItem[] = [
-    { title: "复核当前诊断列表及原始依据", trigger: "现有资料主要来自既往记录，或诊断名称、病理、分期未形成同一条证据链", purpose: "区分原发肿瘤、治疗相关问题、并发症和仍待排除的问题" },
-    { title: "补齐本次症状、查体和关键检验/影像", trigger: "本次主要问题或最新客观状态尚未完整提供", purpose: "判断既往诊断中哪些仍是当前需要处理的问题，并形成入院基线" },
-    { title: "核对既往治疗时间线与疗效", trigger: "既往手术、放疗或系统治疗资料分散，最近疗效评价不清", purpose: "明确当前治疗阶段、既往获益及限制后续讨论的因素" },
-    { title: "补充体能、合并症与器官功能评估", trigger: "ECOG PS、感染/血液学问题或肝肾功能等资料不足", purpose: "为检查优先级和后续治疗可行性讨论提供基础" },
-  ];
-  const generalPathways: ReferencePathItem[] = [
-    { title: "先处理当前突出问题", trigger: "本次存在感染、血细胞异常、疼痛或其他影响安全与治疗实施的问题时", purpose: "先明确严重度、病因线索和复评节点，再讨论抗肿瘤治疗衔接" },
-    { title: "原发肿瘤状态复核路径", trigger: "既往肿瘤诊断明确，但当前分期、复发/进展状态或既往疗效不完整时", purpose: "补齐病理和影像证据后，判断当前处于随访、局部处理还是系统治疗讨论阶段" },
-    { title: "多问题分层讨论路径", trigger: "原发肿瘤、治疗相关不良反应和合并症同时存在时", purpose: "按当前危险性、可逆性和对后续治疗的影响排序，形成上级讨论清单" },
-  ];
-  return {
-    preliminary_diagnosis: defaultReferenceDiagnosis(factsText, diagnosticFacts),
-    diagnostic_basis: diagnosticFacts.length ? diagnosticFacts.map((fact) => `现有资料记载：${fact}`) : ["现有结构化事实尚不足以形成诊断依据摘要"],
-    differential_diagnosis: melanoma
-      ? ["若病理原文、取材代表性或诊断一致性存在疑问，先由病理科复核是否需要鉴别其他色素性病变或不同原发类型"]
-      : ["围绕本次突出问题判断是否需要鉴别感染、治疗相关不良反应、肿瘤进展或其他合并疾病；没有新发疑点时不机械罗列"],
-    missing_prerequisites: melanoma ? ["原发部位、发现及取材方式", "完整病理报告及关键参数", "区域淋巴结和远处转移分期资料", "既往处理、体能状态及合并症"] : generalMissing,
-    suggested_workup: melanoma ? [
-      { title: "复核完整病理与免疫组化原文", trigger: "当前只有确诊摘要或报告内容不全", purpose: "补齐病理类型、Breslow厚度、溃疡、切缘及其他影响分期和讨论路径的参数" },
-      { title: "补充原发灶、全身皮肤及区域淋巴结评估", trigger: "原发部位或实际查体尚未明确", purpose: "明确原发灶、卫星/移行相关皮损及区域淋巴结情况" },
-      { title: "按分期线索选择影像评估", trigger: "当前区域淋巴结或远处转移资料不足，或症状/查体提示需要评估", purpose: "结合已有检查，在区域淋巴结超声、胸部CT、腹盆部增强CT/MRI、骨或中枢评估等候选中选择" },
-      { title: "评估BRAF、c-KIT、NRAS等分子资料", trigger: "进入需要依据分子状态讨论系统治疗的临床情境，且既往结果未提供", purpose: "为后续靶向或系统治疗分层讨论提供依据" },
-    ] : generalWorkup,
-    treatment_pathways: melanoma ? [
-      { title: "局限且可切除路径", trigger: "完整病理和分期支持局限、可切除时", purpose: "进入原发灶手术范围及区域淋巴结管理的多学科评估" },
-      { title: "高风险术后路径", trigger: "已完成切除且病理/分期提示较高复发风险时", purpose: "结合分期、分子状态和患者情况讨论辅助治疗与随访方向" },
-      { title: "不可切除或转移性路径", trigger: "经影像、病理和上级医师确认不可切除或远处转移时", purpose: "结合分子状态、既往治疗、体能和器官功能讨论系统治疗及局部处理方向" },
-    ] : generalPathways,
-    verification_state: "starter",
-    disclaimer: "已根据现有事实生成可编辑的快速候选；资料缺失处已保留条件，需结合原始报告和本次实际情况核对。",
-  };
-}
-
-export function parseClinicalReference(raw: string, factsText: string, diagnosticFacts: string[]): ClinicalReferenceBundle {
+export function parseClinicalReference(raw: string, evidenceText = ""): ClinicalReferenceBundle {
   const value = parseModelJson(raw) as Partial<ClinicalReferenceBundle>;
+  const preliminaryDiagnosis = typeof value.preliminary_diagnosis === "string" ? value.preliminary_diagnosis.trim() : "";
+  const diagnosticBasis = strings(value.diagnostic_basis);
+  const differentialDiagnosis = strings(value.differential_diagnosis, 5);
+  const missingPrerequisites = strings(value.missing_prerequisites);
   const suggestedWorkup = pathItems(value.suggested_workup);
   const treatmentPathways = pathItems(value.treatment_pathways);
-  if (suggestedWorkup.length < 2 || treatmentPathways.length < 2) throw new Error("模型没有生成足够完整的条件性参考路径");
+  if (!preliminaryDiagnosis || diagnosticBasis.length < 1 || missingPrerequisites.length < 1 || suggestedWorkup.length < 2 || treatmentPathways.length < 2) {
+    throw new Error("模型没有生成足够完整的病例专属参考");
+  }
+  if (evidenceText && unsupportedDiagnosticCertainty([preliminaryDiagnosis, ...diagnosticBasis].join(" "), evidenceText.replace(/\s+/g, ""))) {
+    throw new Error("模型在诊断区加入了资料未支持的分期、转移或治疗类型");
+  }
   return {
-    preliminary_diagnosis: defaultReferenceDiagnosis(factsText, diagnosticFacts),
-    diagnostic_basis: diagnosticFacts.length ? diagnosticFacts.map((fact) => `现有资料记载：${fact}`) : strings(value.diagnostic_basis),
-    differential_diagnosis: strings(value.differential_diagnosis, 5),
-    missing_prerequisites: strings(value.missing_prerequisites),
+    preliminary_diagnosis: preliminaryDiagnosis,
+    diagnostic_basis: diagnosticBasis,
+    differential_diagnosis: differentialDiagnosis,
+    missing_prerequisites: missingPrerequisites,
     suggested_workup: suggestedWorkup,
     treatment_pathways: treatmentPathways,
     verification_state: "model_only",
@@ -99,6 +63,14 @@ export function parseClinicalReference(raw: string, factsText: string, diagnosti
 
 export function localReferenceChecks(bundle: ClinicalReferenceBundle): ReferenceCheck[] {
   const text = JSON.stringify(bundle);
+  if (!/黑色素瘤|melanoma/i.test(text)) {
+    return [{
+      topic: "疾病专属来源卡",
+      status: "not_found",
+      note: "当前本地只完成黑色素瘤来源卡；本病例暂无对应瘤种来源卡，不能把黑色素瘤规则用于交叉核验。",
+      source: "本地来源库接入状态",
+    }];
+  }
   return [
     {
       topic: "病理关键参数",

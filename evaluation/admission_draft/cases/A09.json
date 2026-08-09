@@ -1,0 +1,68 @@
+{
+  "case_id": "A09",
+  "case_name": "Markdown栏目与混合模块不得进入主诉现病史",
+  "gold": {
+    "required_facts": [
+      { "field": "diagnosis", "value_contains": "纵隔来源肿瘤", "encounter_scope": "prior", "certainty": "explicit", "source_ids": ["S1"] },
+      { "field": "current_status", "value_contains": "血细胞减少", "encounter_scope": "current", "certainty": "explicit", "source_ids": ["S1"] }
+    ],
+    "forbidden_fact_classifications": [],
+    "forbidden_draft_patterns": [
+      { "section": "chief_complaint", "patterns": ["###", "\\*\\*", "入院诊断", "本次入院目的"], "label": "P2_CHIEF_COMPLAINT_MODULE_LEAK" },
+      { "section": "present_illness", "patterns": ["###", "\\*\\*", "出院诊断", "治疗计划：", "专科情况："], "label": "P1_PRESENT_ILLNESS_MODULE_LEAK" }
+    ],
+    "must_be_empty_sections": [],
+    "required_draft_text": [
+      { "section": "chief_complaint", "any": ["纵隔来源肿瘤治疗后复发"] },
+      { "section": "present_illness", "any": ["血细胞减少"] }
+    ]
+  },
+  "reference_output": {
+    "sources": [
+      { "source_id": "S1", "title": "完全合成纵隔肿瘤资料", "evidence": "既往治疗后复发，近期发现血细胞减少" }
+    ],
+    "facts": [
+      { "fact_id": "F1", "field": "diagnosis", "value": "纵隔来源肿瘤治疗后复发", "event_time": "6年前至近期", "event_type": "onset_diagnosis", "encounter_scope": "prior", "certainty": "explicit", "source_ids": ["S1"] },
+      { "fact_id": "F2", "field": "current_status", "value": "近期发现血细胞减少", "event_time": "近期", "event_type": "current_status", "encounter_scope": "current", "certainty": "explicit", "source_ids": ["S1"] }
+    ],
+    "draft": {
+      "chief_complaint": "纵隔来源肿瘤治疗后复发，近期发现血细胞减少，入院进一步评估",
+      "present_illness": "患者既往因纵隔来源肿瘤接受相关治疗，近期资料提示肿瘤复发，并发现血细胞减少，本次为进一步评估入院。",
+      "past_history": "",
+      "personal_history": "",
+      "family_history": "",
+      "allergy_history": "",
+      "specialist_exam": "",
+      "diagnosis_summary": "",
+      "plan_summary": "",
+      "pending_fields": []
+    },
+    "review_items": []
+  },
+  "constructed_failure": {
+    "sources": [
+      { "source_id": "S1", "title": "完全合成纵隔肿瘤资料", "evidence": "既往治疗后复发，近期发现血细胞减少" }
+    ],
+    "facts": [
+      { "fact_id": "F1", "field": "diagnosis", "value": "纵隔来源肿瘤治疗后复发", "event_time": "6年前至近期", "event_type": "onset_diagnosis", "encounter_scope": "prior", "certainty": "explicit", "source_ids": ["S1"] },
+      { "fact_id": "F2", "field": "current_status", "value": "近期发现血细胞减少", "event_time": "近期", "event_type": "current_status", "encounter_scope": "current", "certainty": "explicit", "source_ids": ["S1"] }
+    ],
+    "draft": {
+      "chief_complaint": "### 入院诊断【病程时间待补】，**本次入院目的**：进一步评估",
+      "present_illness": "### 入院诊断；**确诊经过**：纵隔来源肿瘤。**治疗计划**：进一步处理。",
+      "past_history": "",
+      "personal_history": "",
+      "family_history": "",
+      "allergy_history": "",
+      "specialist_exam": "",
+      "diagnosis_summary": "",
+      "plan_summary": "",
+      "pending_fields": []
+    },
+    "review_items": []
+  },
+  "expected_failure_labels": [
+    "P2_CHIEF_COMPLAINT_MODULE_LEAK",
+    "P1_PRESENT_ILLNESS_MODULE_LEAK"
+  ]
+}

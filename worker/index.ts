@@ -7,6 +7,7 @@ interface Env {
   DB: D1Database;
   ARK_CODING_API_KEY?: string;
   ARK_CODING_MODEL?: string;
+  ARK_REFERENCE_MODEL?: string;
   ARK_CODING_BASE_URL?: string;
   ARK_VISION_API_KEY?: string;
   ARK_VISION_MODEL?: string;
@@ -35,6 +36,7 @@ const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     if (env.ARK_CODING_API_KEY) process.env.ARK_CODING_API_KEY = env.ARK_CODING_API_KEY;
     if (env.ARK_CODING_MODEL) process.env.ARK_CODING_MODEL = env.ARK_CODING_MODEL;
+    if (env.ARK_REFERENCE_MODEL) process.env.ARK_REFERENCE_MODEL = env.ARK_REFERENCE_MODEL;
     if (env.ARK_CODING_BASE_URL) process.env.ARK_CODING_BASE_URL = env.ARK_CODING_BASE_URL;
     if (env.ARK_VISION_API_KEY) process.env.ARK_VISION_API_KEY = env.ARK_VISION_API_KEY;
     if (env.ARK_VISION_MODEL) process.env.ARK_VISION_MODEL = env.ARK_VISION_MODEL;

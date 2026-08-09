@@ -36,7 +36,7 @@ export async function POST(request: Request) {
 
     const apiKey = process.env.ARK_CODING_API_KEY;
     if (!apiKey) return Response.json({ error: "模型服务尚未配置，请稍后再试。" }, { status: 503 });
-    const model = process.env.ARK_CODING_MODEL || "deepseek-v4-flash";
+    const model = process.env.ARK_CODING_MODEL || "deepseek-v4-pro";
     const baseUrl = (process.env.ARK_CODING_BASE_URL || "https://ark.cn-beijing.volces.com/api/coding/v3").replace(/\/$/, "");
     const prompt = [
       "你是入院记录草稿重新合成器。只根据当前草稿和医生刚刚明确选择/填写的确认项重新组织文字。",
@@ -51,7 +51,7 @@ export async function POST(request: Request) {
       `当前草稿：${JSON.stringify(body.draft)}`,
       `医生确认项：${JSON.stringify(body.confirmations)}`,
     ].join("\n\n");
-    const candidate = parseModelJson(await requestModel(baseUrl, apiKey, model, prompt));
+    const candidate = parseModelJson(await requestModel(baseUrl, apiKey, model, prompt, { maxOutputTokens: 4200, timeoutMs: 90000 }));
     if (!isValidAdmissionDraft(candidate)) throw new Error("重新合成结构不完整");
     const recomposed: AdmissionDraft = {
       ...candidate,

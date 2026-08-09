@@ -1,5 +1,5 @@
 import { containsSensitiveIdentifier, requestModel } from "../../../lib/model-api";
-import { ClinicalReferenceBundle, localReferenceChecks, parseClinicalReference, starterClinicalReference, webReferenceChecks } from "../../../lib/clinical-reference";
+import { ClinicalReferenceBundle, localReferenceChecks, parseClinicalReference, webReferenceChecks } from "../../../lib/clinical-reference";
 
 type Fact = { field?: unknown; value?: unknown; event_time?: unknown; event_type?: unknown; encounter_scope?: unknown; certainty?: unknown; source_ids?: unknown };
 
@@ -15,15 +15,11 @@ const stripHtml = (value: string) => value
 export async function POST(request: Request) {
   try {
     const body = await request.json() as { action?: unknown; facts?: unknown; current_purpose?: unknown; reference?: unknown };
-    const action = body.action === "starter" || body.action === "local" || body.action === "web" ? body.action : "generate";
+    const action = body.action === "local" || body.action === "web" ? body.action : "generate";
     const facts = validFacts(body.facts);
     const currentPurpose = typeof body.current_purpose === "string" ? body.current_purpose.slice(0, 240) : "";
-    const factsText = facts.map((fact) => String(fact.value)).join("；");
     if (!facts.length) return Response.json({ error: "缺少可追溯事实，暂时不能生成诊疗参考。" }, { status: 400 });
     if (containsSensitiveIdentifier(JSON.stringify({ facts, currentPurpose }))) return Response.json({ error: "检测到疑似身份证号或手机号，请脱敏后再生成。" }, { status: 400 });
-    const diagnosticFacts = facts.filter((fact) => /diagnosis|pathology/i.test(String(fact.field)) || /diagnosis|pathology|molecular/i.test(String(fact.event_type))).map((fact) => String(fact.value)).slice(0, 6);
-
-    if (action === "starter") return Response.json({ result: starterClinicalReference(factsText, diagnosticFacts) });
 
     if (action === "local") {
       const reference = body.reference as ClinicalReferenceBundle;
@@ -34,6 +30,9 @@ export async function POST(request: Request) {
     if (action === "web") {
       const reference = body.reference as ClinicalReferenceBundle;
       if (!reference || typeof reference !== "object") return Response.json({ error: "请先生成AI参考候选。" }, { status: 400 });
+      if (!/黑色素瘤|melanoma/i.test(JSON.stringify(reference))) {
+        return Response.json({ error: "当前联网权威来源只完成黑色素瘤接入；本病例不使用不匹配的病种页面进行伪核验。" }, { status: 400 });
+      }
       const nciUrl = "https://www.cancer.gov/types/skin/hp/melanoma-treatment-pdq";
       const nhcUrl = "https://www.nhc.gov.cn/yzygj/c100068/202204/0c1f7d3aca0545abbeb02030ce255930.shtml";
       const [nciResult, nhcResult] = await Promise.allSettled([
@@ -61,26 +60,32 @@ export async function POST(request: Request) {
     const apiKey = process.env.ARK_CODING_API_KEY;
     if (!apiKey) return Response.json({ error: "模型服务尚未配置。" }, { status: 503 });
     const baseUrl = (process.env.ARK_CODING_BASE_URL || "https://ark.cn-beijing.volces.com/api/coding/v3").replace(/\/$/, "");
+    const model = process.env.ARK_REFERENCE_MODEL || process.env.ARK_CODING_MODEL || "deepseek-v4-pro";
 
     const prompt = [
-      "你是OncoPilot的肿瘤入院诊疗准备助手。医生明确要求获得一版有用的AI参考，而不是空白。你可以积极给出初步诊断表达、诊断依据、需要补齐的关键前提、候选检查及其目的，以及按分期/可切除性/分子状态分支的治疗讨论方向。",
+      "你是OncoPilot的肿瘤入院诊疗准备助手。请根据本病例结构化事实生成病例专属的初步诊断表达、诊断依据、需要补齐的关键前提、候选检查及其目的，以及分层诊疗讨论方向。不能输出跨病种通用套话来冒充病例分析。",
       "当前是入院记录场景，不是出院记录。输出只使用‘初步诊断’，不得生成‘出院诊断’；既往出院记录中的诊断只能作为既往证据。初步诊断需区分明确诊断、待排诊断、分期和并发症；鉴别诊断只围绕当前确有疑问的问题，不机械罗列。",
       "这不是最终诊疗决定。只能使用已提供的结构化事实，不得编造原发部位、分期、转移、基因状态或治疗反应；不得给药物剂量、频次、直接可执行处方或出院去向。每个检查和治疗方向必须写trigger（什么条件下考虑）与purpose（为了解决什么问题）。",
-      "低信息黑色素瘤也不能只说资料不足：应生成可操作的资料复核、病理参数、分期评估和分层治疗讨论框架。PET-CT、分子检测等只能作为有条件候选，不能写成人人必须。",
-      "只返回JSON：{\"preliminary_diagnosis\":\"\",\"diagnostic_basis\":[\"\"],\"differential_diagnosis\":[\"\"],\"missing_prerequisites\":[\"\"],\"suggested_workup\":[{\"title\":\"\",\"trigger\":\"\",\"purpose\":\"\"}],\"treatment_pathways\":[{\"title\":\"\",\"trigger\":\"\",\"purpose\":\"\"}]}。",
+      "诊断及诊断依据必须沿用资料原词：资料只写‘全身治疗’时不得改写为‘化疗’，只写结节或复发时不得自行升级为转移或某一具体分期。缺少当前数值或原始报告时，相关并发问题使用‘考虑/待排/待明确’，不能写成已经达到某诊断标准。",
+      "资料较少时也不能只说资料不足：应结合已经明确的肿瘤类型、既往治疗和当前突出问题，生成有病例针对性的补充前提和条件性讨论；不能把某一瘤种的固定字段套到其他病种。PET-CT、分子检测等只能作为有条件候选，不能写成人人必须。",
+      "控制篇幅：诊断依据2至4条、鉴别诊断0至3条、关键前提3至6条、候选检查3至5项、诊疗方向2至4项；每项只保留一个明确问题，不重复展开。",
+      "只返回完整JSON：{\"preliminary_diagnosis\":\"\",\"diagnostic_basis\":[\"\"],\"differential_diagnosis\":[\"\"],\"missing_prerequisites\":[\"\"],\"suggested_workup\":[{\"title\":\"\",\"trigger\":\"\",\"purpose\":\"\"}],\"treatment_pathways\":[{\"title\":\"\",\"trigger\":\"\",\"purpose\":\"\"}]}。不得在JSON结束前截断。",
       `本次来院目的：${currentPurpose || "未提供"}`,
       `结构化事实：${JSON.stringify(facts)}`,
     ].join("\n\n");
     try {
-      const result = parseClinicalReference(await requestModel(baseUrl, apiKey, "deepseek-v4-flash", prompt, { maxOutputTokens: 1800, timeoutMs: 25000 }), factsText, diagnosticFacts);
-      return Response.json({ result, degraded: false }, { headers: { "Cache-Control": "no-store" } });
-    } catch {
-      const starter = starterClinicalReference(factsText, diagnosticFacts);
+      const result = parseClinicalReference(
+        await requestModel(baseUrl, apiKey, model, prompt, { maxOutputTokens: 5200, timeoutMs: 120000 }),
+        JSON.stringify({ facts, currentPurpose }),
+      );
+      return Response.json({ result, model }, { headers: { "Cache-Control": "no-store" } });
+    } catch (error) {
+      const timeout = error instanceof Error && error.name === "TimeoutError";
       return Response.json({
-        result: { ...starter, disclaimer: "AI深化本次未在25秒内返回，已保留根据现有事实生成的快速候选；可直接核对使用，也可稍后重新深化。" },
-        degraded: true,
-        warning: "AI深化暂未返回，已保留快速候选。",
-      }, { headers: { "Cache-Control": "no-store" } });
+        error: timeout
+          ? "V4 Pro在2分钟内没有完成病例专属参考；未用通用内置候选替代，请保留当前资料后重试。"
+          : "V4 Pro本次没有生成通过质量校验的病例专属参考；未展示通用套话，请重试。",
+      }, { status: timeout ? 504 : 502, headers: { "Cache-Control": "no-store" } });
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "诊疗参考暂时生成失败。";
