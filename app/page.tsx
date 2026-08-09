@@ -392,7 +392,7 @@ export default function Home() {
       }
       for (let offset = 0; offset < prepared.length; offset += RECOGNITION_CONCURRENCY) {
         const batch = prepared.slice(offset, offset + RECOGNITION_CONCURRENCY);
-        const headings = (await Promise.all(batch.map(recognize))).filter((heading): heading is string => Boolean(heading));
+        const headings = (await Promise.all(batch.map((input) => recognize(input)))).filter((heading): heading is string => Boolean(heading));
         if (headings.length) setSourceText((current) => current.trim() ? `${current.trim()}\n\n${headings.join("\n\n")}` : headings.join("\n\n"));
       }
     } catch (caught) { setError(caught instanceof Error ? caught.message : "文件处理失败，请重试。"); }

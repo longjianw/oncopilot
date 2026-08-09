@@ -273,6 +273,8 @@ test("renders the single-entry admission draft package workflow", async () => {
   assert.match(pageSource, /把候选路径填入计划整理/);
   assert.match(pageSource, /正在用图像模型转录/);
   assert.match(pageSource, /重试本页/);
+  assert.match(pageSource, /batch\.map\(\(input\) => recognize\(input\)\)/);
+  assert.doesNotMatch(pageSource, /batch\.map\(recognize\)/);
   assert.match(pageSource, /正在分段核对事实并生成草稿/);
   assert.match(pageSource, /AI连贯合成未完成/);
   assert.doesNotMatch(html, /进入管床/);
