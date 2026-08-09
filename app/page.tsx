@@ -14,7 +14,7 @@ type ReviewConfirmation = { choice_id: string; option_id: string; prompt: string
 type ChatModel = "deepseek-v4-flash" | "deepseek-v4-pro";
 type ChatEntry = { role: "user" | "assistant"; content: string; modelLabel?: string; elapsedSeconds?: number };
 type AnalysisResult = Record<DraftField, string> & { pending_fields: string[]; sources: Array<{ source_id: string; title: string; evidence: string }>; facts: Fact[]; review_items: ReviewItem[]; template_mode: boolean; template_name: string };
-type UploadItem = { id: string; name: string; preview?: string; status: UploadStatus; error?: string };
+type UploadItem = { id: string; name: string; file: File; preview?: string; status: UploadStatus; error?: string; model?: string };
 type PreparedInput = { name: string; file: File; preview?: string };
 
 const MAX_ITEMS = 20;
@@ -22,7 +22,7 @@ const MAX_PDF_PAGES = 20;
 const MAX_UPLOAD_BYTES = 900_000;
 const MAX_EDGE = 1800;
 const MAX_SOURCE_CHARS = 32_000;
-const RECOGNITION_CONCURRENCY = 3;
+const RECOGNITION_CONCURRENCY = 2;
 
 const sectionLabels: Array<{ field: DraftField; label: string; hint: string; placeholder: string; large?: boolean }> = [
   { field: "chief_complaint", label: "主诉", hint: "疾病或主要症状 + 时间 + 本次目的", placeholder: "可在上方点选候选项，也可直接输入" },
@@ -97,7 +97,7 @@ const isPdf = (file: File) => file.type === "application/pdf" || /\.pdf$/i.test(
 
 const readPayload = async (response: Response) => {
   const raw = await response.text();
-  try { return JSON.parse(raw) as { extracted_text?: string; error?: string }; } catch {
+  try { return JSON.parse(raw) as { extracted_text?: string; error?: string; model?: string; method?: string }; } catch {
     return { error: response.status === 413 ? "文件过大，已停止上传。请改用更清晰但更小的图片，或拆分 PDF。" : `图片服务返回异常（${response.status}），请重试。` };
   }
 };
@@ -158,6 +158,8 @@ export default function Home() {
   const [currentPurpose, setCurrentPurpose] = useState("");
   const [draft, setDraft] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(false);
+  const [analysisElapsed, setAnalysisElapsed] = useState(0);
+  const [analysisNotice, setAnalysisNotice] = useState("");
   const [uploads, setUploads] = useState<UploadItem[]>([]);
   const [selectedChoices, setSelectedChoices] = useState<Record<string, string>>({});
   const [choiceDetails, setChoiceDetails] = useState<Record<string, string>>({});
@@ -184,6 +186,12 @@ export default function Home() {
     const timer = window.setInterval(() => setChatElapsed((seconds) => seconds + 1), 1000);
     return () => window.clearInterval(timer);
   }, [chatLoading]);
+
+  useEffect(() => {
+    if (!loading) return;
+    const timer = window.setInterval(() => setAnalysisElapsed((seconds) => seconds + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [loading]);
 
   const updateUpload = (id: string, patch: Partial<UploadItem>) => setUploads((items) => items.map((item) => item.id === id ? { ...item, ...patch } : item));
   const updateDraft = (field: DraftField, value: string) => setDraft((current) => current ? { ...current, [field]: value } : current);
@@ -331,26 +339,37 @@ export default function Home() {
 
   const analyze = async () => {
     if (sourceText.trim().length < 20 || loading) return;
-    setLoading(true); setError("");
+    setLoading(true); setAnalysisElapsed(0); setAnalysisNotice(""); setError("");
     try {
       const response = await fetch("/api/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source_text: sourceText, current_purpose: currentPurpose }) });
-      const payload = await readPayload(response) as { result?: AnalysisResult; error?: string };
+      const payload = await readPayload(response) as { result?: AnalysisResult; processing_status?: "complete" | "draft_fallback"; fact_fallback_count?: number; error?: string };
       if (!response.ok || !payload.result) throw new Error(payload.error || "AI整理失败，请稍后重试。");
+      const notices = [
+        payload.fact_fallback_count ? `${payload.fact_fallback_count}段资料未通过结构化校验，原文已保留为“待人工复核事实”，没有丢弃整份任务。` : "",
+        payload.processing_status === "draft_fallback" ? "AI连贯合成未完成，当前先显示事实顺序稿与候选模板，可继续核对编辑，无需重新上传资料。" : "",
+      ].filter(Boolean);
+      if (notices.length) setAnalysisNotice(notices.join(" "));
       setDraft(payload.result); setStage("result"); void generateClinicalReference(payload.result);
     } catch (caught) { setError(caught instanceof Error ? caught.message : "AI整理失败，请稍后重试。"); } finally { setLoading(false); }
   };
 
-  const recognize = async (input: PreparedInput): Promise<string | null> => {
-    const id = crypto.randomUUID();
-    setUploads((items) => [...items, { id, name: input.name, preview: input.preview, status: "recognizing" }]);
+  const recognize = async (input: PreparedInput, existingId?: string): Promise<string | null> => {
+    const id = existingId || crypto.randomUUID();
+    if (existingId) updateUpload(id, { status: "recognizing", error: undefined });
+    else setUploads((items) => [...items, { id, name: input.name, file: input.file, preview: input.preview, status: "recognizing" }]);
     try {
       const formData = new FormData(); formData.append("image", input.file);
       const response = await fetch("/api/extract-image", { method: "POST", body: formData });
       const payload = await readPayload(response);
       if (!response.ok || !payload.extracted_text) throw new Error(payload.error || "图片暂时没有识别出来。");
-      updateUpload(id, { status: "done" });
-      return `【${input.name}｜AI识别，待核对】\n${payload.extracted_text.trim()}`;
+      updateUpload(id, { status: "done", model: payload.model });
+      return `【${input.name}｜视觉转录，待核对】\n${payload.extracted_text.trim()}`;
     } catch (caught) { updateUpload(id, { status: "error", error: caught instanceof Error ? caught.message : "图片识别失败" }); return null; }
+  };
+
+  const retryUpload = async (item: UploadItem) => {
+    const heading = await recognize({ name: item.name, file: item.file, preview: item.preview }, item.id);
+    if (heading) setSourceText((current) => current.trim() ? `${current.trim()}\n\n${heading}` : heading);
   };
 
   const chooseDocuments = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -385,7 +404,7 @@ export default function Home() {
     setSourceText(await file.text()); setError("");
   };
 
-  const reset = () => { setStage("input"); setSourceText(""); setCurrentPurpose(""); setDraft(null); setUploads([]); setSelectedChoices({}); setChoiceDetails({}); setAppliedChoiceText({}); setRecomposeNotice(""); setChatOpen(false); setChatContext("当前模板整体"); setChatMessages([]); setChatInput(""); setChatModel("deepseek-v4-flash"); setChatElapsed(0); setClinicalReference(null); setReferenceLoading(false); setVerificationLoading(null); setReferenceNotice(""); setCopied(false); setError(""); };
+  const reset = () => { setStage("input"); setSourceText(""); setCurrentPurpose(""); setDraft(null); setUploads([]); setSelectedChoices({}); setChoiceDetails({}); setAppliedChoiceText({}); setRecomposeNotice(""); setChatOpen(false); setChatContext("当前模板整体"); setChatMessages([]); setChatInput(""); setChatModel("deepseek-v4-flash"); setChatElapsed(0); setAnalysisElapsed(0); setAnalysisNotice(""); setClinicalReference(null); setReferenceLoading(false); setVerificationLoading(null); setReferenceNotice(""); setCopied(false); setError(""); };
   const copyDraft = async () => {
     if (!draft) return;
     const text = sectionLabels.map(({ field, label }) => draft[field].trim() ? `${label}：\n${draft[field].trim()}` : "").filter(Boolean).join("\n\n");
@@ -410,17 +429,18 @@ export default function Home() {
         <p className="reference-status"><b>安全边界</b> 仅使用完全合成或严格脱敏资料；本地规则只约束草稿结构，不替代本院模板和上级审核。</p>
         <label className="purpose-field"><span>本次来院目的 <b>可选，但建议填写</b></span><input value={currentPurpose} onChange={(event) => setCurrentPurpose(event.target.value)} maxLength={160} placeholder="例如：继续治疗、复查评估、处理新出现的症状……" /><small>这行用于区分既往住院、出院计划与本次就诊。</small></label>
         <div className="image-actions" aria-label="资料文件输入"><label className="image-action camera-action">拍照<input type="file" accept="image/*" capture="environment" multiple onChange={chooseDocuments} /></label><label className="image-action">上传图片或 PDF<input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif,application/pdf,.pdf" multiple onChange={chooseDocuments} /></label><span>最多 {MAX_ITEMS} 个资料页；PDF 最多 {MAX_PDF_PAGES} 页；HEIC 会先在本机转换</span></div>
-        {uploads.length > 0 && <div className="upload-list">{uploads.map((item) => <div className={`upload-item ${item.status}`} key={item.id}>{item.preview ? <Image unoptimized src={item.preview} width={54} height={42} alt="待识别资料预览" /> : <span className="file-icon">PDF</span>}<span><strong>{item.name}</strong><small>{item.status === "recognizing" ? "正在识别并填入下方…" : item.status === "done" ? "已识别并填入下方，请核对文字" : item.error || "文件处理失败"}</small></span></div>)}</div>}
+        {uploads.length > 0 && <div className="upload-list">{uploads.map((item) => <div className={`upload-item ${item.status}`} key={item.id}>{item.preview ? <Image unoptimized src={item.preview} width={54} height={42} alt="待识别资料预览" /> : <span className="file-icon">PDF</span>}<span><strong>{item.name}</strong><small>{item.status === "recognizing" ? "正在用图像模型转录并填入下方…" : item.status === "done" ? `已由 ${item.model || "图像模型"} 转录，请核对文字` : item.error || "文件处理失败"}</small>{item.status === "error" && <button type="button" onClick={() => void retryUpload(item)}>重试本页</button>}</span></div>)}</div>}
         <textarea value={sourceText} onChange={(event) => { setSourceText(event.target.value); setError(""); }} placeholder="把外院病理、检查、手术和治疗经过，本次症状，已询问的病史，实际查体，以及医生明确写下的诊断/计划放在这里……" aria-label="患者资料" maxLength={MAX_SOURCE_CHARS} />
         <div className="input-footer"><label className="file-choice">选择文本文件<input type="file" accept=".txt,.md,.json,text/plain" onChange={chooseFile} /></label><span>{sourceText.length}/{MAX_SOURCE_CHARS}</span></div>
         {error && <p className="error-message" role="alert">{error}</p>}
-        <button type="button" className="primary-action" disabled={sourceText.trim().length < 20 || loading || busy} onClick={analyze}>{loading ? <><i className="spinner" />正在先核对事实，再生成草稿</> : <>生成入院记录草稿包 <b>→</b></>}</button>
+        <button type="button" className="primary-action" disabled={sourceText.trim().length < 20 || loading || busy} onClick={analyze}>{loading ? <><i className="spinner" />正在分段核对事实并生成草稿（{analysisElapsed}秒）</> : <>生成入院记录草稿包 <b>→</b></>}</button>
         <p className="privacy-copy">系统会提供候选阴性项和查体模板，但只有你点击确认后才加入草稿。</p>
       </div>
       <div className="output-promise three-items" aria-label="系统输出"><div><b>01</b><span><strong>先整理已知事实</strong><small>来源、时间、本次/既往、证据强度</small></span></div><div><b>02</b><span><strong>再给候选选项</strong><small>症状、病史、检查经过和专科查体</small></span></div><div><b>03</b><span><strong>点选后进入草稿</strong><small>保留人工判断，又不用从零书写</small></span></div></div>
     </section>}
     {stage === "result" && draft && <section className="single-flow result-stage draft-package">
       <div className="result-title"><div><span className="success-mark">✓</span><span><small>草稿骨架与候选项已生成</small><h1>先点选补全，再微调文字</h1></span></div><button type="button" className="copy-all" onClick={copyDraft}>{copied ? "已复制当前草稿" : unresolvedMarkers ? "复制当前草稿（含待完成标记）" : "复制当前草稿"}</button></div>
+      {analysisNotice && <p className="analysis-notice">{analysisNotice}</p>}
       <div className="safety-banner"><strong>{draft.template_name}</strong><span>方括号是待完成项；下面的候选内容默认不算事实，只有点击后才加入对应草稿。</span></div>
       {draft.review_items.length > 0 && <section className="guided-review">
         <div className="guided-heading"><div><span>快速补全</span><h2>先选择，再补细节，最后重新成稿</h2><p>已选择 {selectedCount}/{draft.review_items.length} 项。每次点击会先写入对应模块；完成几项后可一键整理成连贯文字。</p></div><div className="guided-tools"><div className="choice-legend"><span className="positive">有 / 异常</span><span className="negative">无 / 正常</span><span>未问 / 未查</span></div><button type="button" className="ask-ai" onClick={() => openTemplateChat()}>问 AI 这个模板</button></div></div>

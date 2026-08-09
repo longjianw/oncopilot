@@ -66,7 +66,7 @@ export async function POST(request: Request) {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify(requestBody),
-      signal: AbortSignal.timeout(75000),
+      signal: AbortSignal.timeout(110000),
     });
 
     if (!upstream.ok) {
@@ -77,10 +77,10 @@ export async function POST(request: Request) {
     const extractedText = responseText(data);
     if (!extractedText) throw new Error("视觉模型没有返回可用文字");
 
-    return Response.json({ extracted_text: extractedText }, { headers: { "Cache-Control": "no-store" } });
+    return Response.json({ extracted_text: extractedText, model, method: "vision_transcription" }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     const message = error instanceof Error && error.name === "TimeoutError"
-      ? "图片识别超时，请拍得更清楚或缩小图片后重试。"
+      ? "视觉模型超过110秒仍未完成，请重试本页；字迹模糊、旋转或并发繁忙都可能导致变慢。"
       : error instanceof Error && /413|Payload Too Large/.test(error.message)
         ? "图片仍然过大，请裁剪到单页后重试。"
         : "图片暂时没有识别出来，请重试一次。";

@@ -1,7 +1,9 @@
 import {
   AnalysisResult,
   AdmissionDraft,
+  ExtractedFact,
   FactExtraction,
+  SourceReference,
   hasUnsupportedDoctorJudgment,
   isValidAdmissionDraft,
   isValidFactExtraction,
@@ -34,12 +36,12 @@ const parseJson = (text: string) => {
   }
 };
 
-const requestJson = async (baseUrl: string, apiKey: string, model: string, prompt: string) => {
+const requestJson = async (baseUrl: string, apiKey: string, model: string, prompt: string, maxOutputTokens: number, timeoutMs = 110000) => {
   const upstream = await fetch(`${baseUrl}/responses`, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model, input: prompt }),
-    signal: AbortSignal.timeout(75000),
+    body: JSON.stringify({ model, input: prompt, max_output_tokens: maxOutputTokens }),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   const rawText = await upstream.text();
   if (!upstream.ok) throw new Error(`上游模型请求失败：${upstream.status}`);
@@ -81,11 +83,125 @@ const buildExtractionPrompt = (sourceText: string, currentPurpose: string) => [
   "每条事实必须绑定至少一个来源。保留原文的考虑、可能、倾向、疑似、待排等不确定性，不得升级为确定事实。未询问和未提供不等于阴性。未查体不等于正常。",
   "只有输入明确标注为医生判断、初步诊断、诊疗计划或医生已确认的内容，才能标为doctor_diagnosis/doctor_plan，certainty必须为doctor_confirmed。其他推断不得归入这两类。",
   "本次来院目的作为单独字段，判断本次就诊时优先于原始资料最后出现的住院、出院或未来日期。如果提供了单独目的，为它建立S-PURPOSE来源和current范围事实。",
-  "只输出一个JSON对象，不要Markdown或解释。必须严格符合以下结构，pending_fields最多6条：",
+  "只输出一个JSON对象，不要Markdown或解释。sources最多12条，facts最多30条，pending_fields最多6条；事实只保留会影响入院记录的内容，避免逐字重复检验单。每条value尽量不超过160字，source evidence尽量不超过200字：",
   JSON.stringify(extractionShape),
   `单独填写的本次来院目的：${currentPurpose || "未提供"}`,
   `待抽取资料：\n${sourceText}`,
 ].join("\n\n");
+
+const SOURCE_CHUNK_CHARS = 1800;
+const splitSourceText = (sourceText: string) => {
+  if (sourceText.length <= 2500) return [sourceText];
+  const pages = sourceText.split(/(?=【[^】]+(?:AI识别|视觉转录)[^】]*】)/).map((part) => part.trim()).filter(Boolean);
+  const units = pages.length > 1 ? pages : sourceText.split(/\n{2,}/).map((part) => part.trim()).filter(Boolean);
+  const chunks: string[] = [];
+  let current = "";
+  for (const unit of units) {
+    if (unit.length > SOURCE_CHUNK_CHARS) {
+      if (current) { chunks.push(current); current = ""; }
+      for (let start = 0; start < unit.length; start += SOURCE_CHUNK_CHARS) chunks.push(unit.slice(start, start + SOURCE_CHUNK_CHARS));
+    } else if (!current || current.length + unit.length + 2 <= SOURCE_CHUNK_CHARS) current = current ? `${current}\n\n${unit}` : unit;
+    else { chunks.push(current); current = unit; }
+  }
+  if (current) chunks.push(current);
+  return chunks;
+};
+
+const withPrefix = (extraction: FactExtraction, chunkIndex: number): FactExtraction => {
+  const prefix = `C${chunkIndex + 1}-`;
+  const sourceMap = new Map(extraction.sources.map((source) => [source.source_id, `${prefix}${source.source_id}`]));
+  return {
+    ...extraction,
+    sources: extraction.sources.map((source) => ({ ...source, source_id: sourceMap.get(source.source_id)! })),
+    facts: extraction.facts.map((fact) => ({ ...fact, fact_id: `${prefix}${fact.fact_id}`, source_ids: fact.source_ids.map((id) => sourceMap.get(id)).filter((id): id is string => Boolean(id)) })),
+  };
+};
+
+const mergeExtractions = (parts: FactExtraction[], currentPurpose: string): FactExtraction => {
+  const sources: SourceReference[] = parts.flatMap((part) => part.sources).slice(0, 40);
+  const allowedSources = new Set(sources.map((source) => source.source_id));
+  const facts: ExtractedFact[] = parts.flatMap((part) => part.facts)
+    .filter((fact) => fact.source_ids.every((id) => allowedSources.has(id)))
+    .slice(0, 120);
+  if (currentPurpose && !facts.some((fact) => fact.event_type === "current_purpose") && sources.length < 40 && facts.length < 120) {
+    sources.push({ source_id: "S-PURPOSE", title: "本次来院目的", evidence: currentPurpose });
+    facts.push({ fact_id: "F-PURPOSE", field: "current_purpose", value: currentPurpose, event_time: "本次", event_type: "current_purpose", encounter_scope: "current", certainty: "explicit", source_ids: ["S-PURPOSE"] });
+  }
+  return {
+    current_purpose: currentPurpose || parts.find((part) => part.current_purpose)?.current_purpose || null,
+    sources,
+    facts,
+    pending_fields: [...new Set(parts.flatMap((part) => part.pending_fields))].slice(0, 6),
+  };
+};
+
+const rawChunkExtraction = (chunk: string, chunkIndex: number): FactExtraction => {
+  const rawSourceId = "RAW";
+  const firstLine = chunk.split("\n").find((line) => line.trim())?.replace(/[【】]/g, "").slice(0, 150) || `第${chunkIndex + 1}段资料`;
+  const pieces = Array.from({ length: Math.ceil(chunk.length / 700) }, (_, index) => chunk.slice(index * 700, (index + 1) * 700)).filter((piece) => piece.trim());
+  return {
+    current_purpose: null,
+    sources: [{ source_id: rawSourceId, title: `${firstLine}（结构化待复核）`, evidence: chunk.slice(0, 500) }],
+    facts: pieces.map((piece, index) => ({
+      fact_id: `RAW-F${index + 1}`,
+      field: "unparsed_source_segment",
+      value: piece,
+      event_time: "待核对",
+      event_type: "other",
+      encounter_scope: "unclear",
+      certainty: "pending",
+      source_ids: [rawSourceId],
+    })),
+    pending_fields: [`第${chunkIndex + 1}段资料需人工复核`],
+  };
+};
+
+const extractFacts = async (baseUrl: string, apiKey: string, model: string, sourceText: string, currentPurpose: string) => {
+  const chunks = splitSourceText(sourceText);
+  const parts: FactExtraction[] = [];
+  let fallbackCount = 0;
+  for (let offset = 0; offset < chunks.length; offset += 2) {
+    const batch = chunks.slice(offset, offset + 2);
+    const results = await Promise.all(batch.map(async (chunk, index) => {
+      const chunkIndex = offset + index;
+      let extracted: unknown;
+      try {
+        extracted = await requestJson(baseUrl, apiKey, model, buildExtractionPrompt(chunk, chunkIndex === 0 ? currentPurpose : ""), 3600);
+        if (!isValidFactExtraction(extracted)) throw new Error("结构不完整");
+        return { part: withPrefix(extracted, chunkIndex), usedFallback: false };
+      } catch {
+        return { part: withPrefix(rawChunkExtraction(chunk, chunkIndex), chunkIndex), usedFallback: true };
+      }
+    }));
+    parts.push(...results.map((result) => result.part));
+    fallbackCount += results.filter((result) => result.usedFallback).length;
+  }
+  const merged = mergeExtractions(parts, currentPurpose);
+  if (!isValidFactExtraction(merged)) throw new Error("合并后的事实结构不完整");
+  return { extraction: merged, chunkCount: chunks.length, fallbackCount };
+};
+
+const fallbackDraftFromFacts = (extraction: FactExtraction): AdmissionDraft => {
+  const values = (eventType: string) => extraction.facts.filter((fact) => fact.event_type === eventType).map((fact) => fact.value);
+  const chronology = ["onset_diagnosis", "pathology_molecular", "prior_treatment", "progression_evidence", "current_status", "current_purpose"]
+    .flatMap(values);
+  const diagnosis = extraction.facts.find((fact) => fact.event_type === "onset_diagnosis")?.value || "肿瘤相关资料待核对";
+  const purpose = extraction.current_purpose || values("current_purpose")[0] || "进一步评估";
+  const join = (items: string[]) => [...new Set(items.map((item) => item.trim()).filter(Boolean))].join("；");
+  const present = join(chronology) || join(extraction.facts.map((fact) => fact.value));
+  return {
+    chief_complaint: `${diagnosis.slice(0, 60)}，${purpose.slice(0, 30)}`.slice(0, 100),
+    present_illness: `【AI连贯合成未完成，以下为已核验事实顺序稿】${present || "已提取资料待医生核对"}。`,
+    past_history: join(values("past_history")),
+    personal_history: join(values("personal_history")),
+    family_history: join(values("family_history")),
+    allergy_history: join(values("allergy_history")),
+    specialist_exam: join(values("specialist_exam")),
+    diagnosis_summary: join(extraction.facts.filter((fact) => fact.event_type === "doctor_diagnosis" && fact.certainty === "doctor_confirmed").map((fact) => fact.value)),
+    plan_summary: join(extraction.facts.filter((fact) => fact.event_type === "doctor_plan" && fact.certainty === "doctor_confirmed").map((fact) => fact.value)),
+    pending_fields: extraction.pending_fields,
+  };
+};
 
 const buildDraftPrompt = (extraction: FactExtraction) => [
   "你是医疗AI作品中的入院记录草稿整理器。你只能使用下方已经结构化并绑定来源的事实，禁止回看或补猜原始资料。",
@@ -134,10 +250,17 @@ export async function POST(request: Request) {
     const model = process.env.ARK_CODING_MODEL || "deepseek-v4-flash";
     const baseUrl = (process.env.ARK_CODING_BASE_URL || "https://ark.cn-beijing.volces.com/api/coding/v3").replace(/\/$/, "");
 
-    const extraction = await requestJson(baseUrl, apiKey, model, buildExtractionPrompt(sourceText, currentPurpose));
-    if (!isValidFactExtraction(extraction)) throw new Error("事实抽取结构不完整");
-    const rawDraft = await requestJson(baseUrl, apiKey, model, buildDraftPrompt(extraction));
-    if (!isValidAdmissionDraft(rawDraft)) throw new Error("草稿包结构不完整");
+    const { extraction, chunkCount, fallbackCount } = await extractFacts(baseUrl, apiKey, model, sourceText, currentPurpose);
+    let rawDraft: AdmissionDraft;
+    let processingStatus: "complete" | "draft_fallback" = "complete";
+    try {
+      const generated = await requestJson(baseUrl, apiKey, model, buildDraftPrompt(extraction), 3600, 120000);
+      if (!isValidAdmissionDraft(generated)) throw new Error("草稿包结构不完整");
+      rawDraft = generated;
+    } catch {
+      rawDraft = fallbackDraftFromFacts(extraction);
+      processingStatus = "draft_fallback";
+    }
     const evidenceDraft = forceEvidenceBoundSections(extraction, rawDraft);
     if (hasUnsupportedDoctorJudgment(extraction, evidenceDraft)) throw new Error("诊断或计划缺少医生明确判断来源");
     const guided = buildGuidedDraft(extraction, evidenceDraft);
@@ -150,11 +273,22 @@ export async function POST(request: Request) {
       template_mode: guided.template_mode,
       template_name: guided.template_name,
     };
-    return Response.json({ model, result }, { headers: { "Cache-Control": "no-store" } });
+    return Response.json({ model, processing_mode: chunkCount > 1 ? "chunked" : "single", processing_status: processingStatus, chunk_count: chunkCount, fact_fallback_count: fallbackCount, result }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
+    const detail = error instanceof Error ? error.message : "";
     const message = error instanceof Error && error.name === "TimeoutError"
-      ? "模型响应超时，请稍后重试。"
-      : "AI暂时没有完成事实核对和草稿整理，请重试一次。";
+      ? "模型响应超时；长资料已分段处理，但当前阶段仍超过等待上限，请重试。"
+      : /第\d+段事实抽取结构不完整/.test(detail)
+        ? `${detail}，请重试；系统不会丢弃已转录文字。`
+        : /第\d+段事实抽取失败/.test(detail)
+          ? `${detail.replace(/上游模型请求失败/g, "模型服务返回错误")}；已转录文字仍保留，可直接重试生成。`
+        : /合并后的事实结构不完整/.test(detail)
+          ? "分段事实已返回，但合并校验未通过，请重试。"
+          : /草稿包结构不完整|诊断或计划缺少/.test(detail)
+            ? "事实抽取已完成，但草稿结构校验未通过，请重试生成。"
+            : /模型没有返回可解析的JSON/.test(detail)
+              ? "模型返回格式不完整，请重试；已转录文字仍保留在页面。"
+              : "AI暂时没有完成事实核对和草稿整理，请重试一次。";
     return Response.json({ error: message }, { status: 502, headers: { "Cache-Control": "no-store" } });
   }
 }

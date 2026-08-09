@@ -27,6 +27,28 @@ async function extractWithoutVisionService() {
   );
 }
 
+async function extractWithVisionService() {
+  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
+  workerUrl.searchParams.set("image-model-test", `${process.pid}-${Date.now()}`);
+  const { default: worker } = await import(workerUrl.href);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    assert.equal(body.model, "doubao-seed-2.0-code");
+    assert.equal(body.input[0].content[1].type, "input_image");
+    return new Response(JSON.stringify({ output_text: "完全合成病理资料" }), { status: 200 });
+  };
+  const formData = new FormData();
+  formData.append("image", new File(["synthetic image"], "synthetic.jpg", { type: "image/jpeg" }));
+  try {
+    return await worker.fetch(
+      new Request("http://localhost/api/extract-image", { method: "POST", body: formData }),
+      { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) }, ARK_CODING_API_KEY: "synthetic-test-key" },
+      { waitUntil() {}, passThroughOnException() {} },
+    );
+  } finally { globalThis.fetch = originalFetch; }
+}
+
 async function analyzeWithMockModel() {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("analyze-test", `${process.pid}-${Date.now()}`);
@@ -72,6 +94,45 @@ async function analyzeWithMockModel() {
   } finally {
     globalThis.fetch = originalFetch;
   }
+}
+
+async function analyzeLongSourceWithMockModel(draftFails = false, extractionFails = false) {
+  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
+  workerUrl.searchParams.set("long-analyze-test", `${process.pid}-${Date.now()}`);
+  const { default: worker } = await import(workerUrl.href);
+  const sourceText = Array.from({ length: 10 }, (_, index) => `【完全合成资料 · 第${index + 1}页｜视觉转录，待核对】\n${"完全合成检查摘要，无身份信息。".repeat(55)}`).join("\n\n");
+  const draft = {
+    chief_complaint: "发现肿瘤相关异常1月，入院进一步评估",
+    present_illness: "患者1月前发现肿瘤相关异常，已完成部分检查，本次为进一步评估入院。",
+    past_history: "", personal_history: "", family_history: "", allergy_history: "", specialist_exam: "", diagnosis_summary: "", plan_summary: "", pending_fields: [],
+  };
+  const originalFetch = globalThis.fetch;
+  let extractionCalls = 0;
+  let draftCalls = 0;
+  globalThis.fetch = async (_url, init) => {
+    const prompt = JSON.parse(init.body).input;
+    if (prompt.includes("结构化事实抽取器")) {
+      extractionCalls += 1;
+      if (extractionFails) return new Response(JSON.stringify({ output_text: JSON.stringify({ current_purpose: null, sources: [], facts: [], pending_fields: [] }) }), { status: 200 });
+      return new Response(JSON.stringify({ output_text: JSON.stringify({
+        current_purpose: prompt.includes("进一步评估") ? "进一步评估" : null,
+        sources: [{ source_id: "S1", title: `完全合成分段${extractionCalls}`, evidence: "完全合成检查摘要" }],
+        facts: [{ fact_id: "F1", field: "other", value: `第${extractionCalls}段检查资料已提供`, event_time: "未提供", event_type: "other", encounter_scope: "prior", certainty: "explicit", source_ids: ["S1"] }],
+        pending_fields: [],
+      }) }), { status: 200 });
+    }
+    draftCalls += 1;
+    if (draftFails) return new Response("upstream unavailable", { status: 504 });
+    return new Response(JSON.stringify({ output_text: JSON.stringify(draft) }), { status: 200 });
+  };
+  try {
+    const response = await worker.fetch(
+      new Request("http://localhost/api/analyze", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ source_text: sourceText, current_purpose: "进一步评估" }) }),
+      { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) }, ARK_CODING_API_KEY: "synthetic-test-key" },
+      { waitUntil() {}, passThroughOnException() {} },
+    );
+    return { response, extractionCalls, draftCalls };
+  } finally { globalThis.fetch = originalFetch; }
 }
 
 async function recomposeWithMockModel() {
@@ -210,6 +271,10 @@ test("renders the single-entry admission draft package workflow", async () => {
   assert.match(pageSource, /联网核验权威网页/);
   assert.match(pageSource, /填入诊断整理/);
   assert.match(pageSource, /把候选路径填入计划整理/);
+  assert.match(pageSource, /正在用图像模型转录/);
+  assert.match(pageSource, /重试本页/);
+  assert.match(pageSource, /正在分段核对事实并生成草稿/);
+  assert.match(pageSource, /AI连贯合成未完成/);
   assert.doesNotMatch(html, /进入管床/);
   assert.doesNotMatch(html, /合成患者 A02/);
   assert.doesNotMatch(html, /codex-preview/);
@@ -221,6 +286,15 @@ test("rejects image extraction clearly when no vision service is configured", as
   assert.equal(response.status, 503);
   const body = await response.json();
   assert.match(body.error, /图片识别服务尚未配置/);
+});
+
+test("uses the configured multimodal Doubao model for image transcription", async () => {
+  const response = await extractWithVisionService();
+  assert.equal(response.status, 200, await response.clone().text());
+  const body = await response.json();
+  assert.equal(body.model, "doubao-seed-2.0-code");
+  assert.equal(body.method, "vision_transcription");
+  assert.equal(body.extracted_text, "完全合成病理资料");
 });
 
 test("extracts facts first and adds melanoma scaffolds plus guided choices", async () => {
@@ -252,6 +326,41 @@ test("extracts facts first and adds melanoma scaffolds plus guided choices", asy
   assert.match(body.result.specialist_exam, /粘连/);
   assert.doesNotMatch(body.result.specialist_exam, /右侧腋窝.*肿大/);
   assert.deepEqual(body.result.pending_fields, ["过敏史：待核对"]);
+});
+
+test("segments long multi-page source text before fact extraction and merges the facts", async () => {
+  const { response, extractionCalls, draftCalls } = await analyzeLongSourceWithMockModel();
+  assert.equal(response.status, 200, await response.clone().text());
+  const body = await response.json();
+  assert.equal(body.processing_mode, "chunked");
+  assert.ok(body.chunk_count >= 2);
+  assert.equal(extractionCalls, body.chunk_count);
+  assert.equal(draftCalls, 1);
+  assert.equal(body.result.facts.length, body.chunk_count + 1);
+  assert.ok(body.result.facts.some((fact) => fact.fact_id === "F-PURPOSE"));
+  assert.ok(body.result.facts.filter((fact) => fact.fact_id !== "F-PURPOSE").every((fact) => /^C\d+-F1$/.test(fact.fact_id)));
+});
+
+test("returns a fact-bound fallback draft when long-source prose generation fails", async () => {
+  const { response, extractionCalls, draftCalls } = await analyzeLongSourceWithMockModel(true);
+  assert.equal(response.status, 200, await response.clone().text());
+  const body = await response.json();
+  assert.equal(body.processing_status, "draft_fallback");
+  assert.ok(extractionCalls >= 2);
+  assert.equal(draftCalls, 1);
+  assert.match(body.result.present_illness, /已核验事实顺序稿/);
+  assert.doesNotMatch(body.result.present_illness, /高血压|糖尿病|转移/);
+});
+
+test("keeps unparsed long-source segments as pending source-bound facts", async () => {
+  const { response, extractionCalls, draftCalls } = await analyzeLongSourceWithMockModel(false, true);
+  assert.equal(response.status, 200, await response.clone().text());
+  const body = await response.json();
+  assert.equal(body.fact_fallback_count, body.chunk_count);
+  assert.equal(extractionCalls, body.chunk_count);
+  assert.equal(draftCalls, 1);
+  assert.ok(body.result.facts.some((fact) => fact.field === "unparsed_source_segment" && fact.certainty === "pending"));
+  assert.ok(body.result.sources.some((source) => /结构化待复核/.test(source.title)));
 });
 
 test("recomposes confirmed choices and free text without adding diagnosis or plan", async () => {
