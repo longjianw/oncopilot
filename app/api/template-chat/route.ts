@@ -61,7 +61,7 @@ export async function POST(request: Request) {
         let answer = "";
         controller.enqueue(event("meta", { model }));
         try {
-          for await (const delta of requestModelStream(baseUrl, apiKey, model, prompt, { maxOutputTokens: model === "deepseek-v4-flash" ? 220 : 320, timeoutMs: 60000 })) {
+          for await (const delta of requestModelStream(baseUrl, apiKey, model, prompt, { maxOutputTokens: model === "deepseek-v4-flash" ? 640 : 1000, timeoutMs: 60000 })) {
             answer += delta;
             controller.enqueue(event("delta", { answer: cleanChatAnswer(answer) }));
           }
