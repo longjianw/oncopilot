@@ -313,7 +313,8 @@ test("renders the single-entry admission draft package workflow", async () => {
   assert.match(pageSource, /const results: Array<string \| null>/);
   assert.match(pageSource, /setSourceText\(baseText/);
   assert.match(pageSource, /正在分段核对事实并生成草稿/);
-  assert.match(pageSource, /AI连贯合成未完成/);
+  assert.match(pageSource, /原文仅保留在来源与待核对区/);
+  assert.match(pageSource, /连贯合成未完成/);
   assert.doesNotMatch(html, /进入管床/);
   assert.doesNotMatch(html, /合成患者 A02/);
   assert.doesNotMatch(html, /codex-preview/);
@@ -397,8 +398,22 @@ test("returns a fact-bound fallback draft when long-source prose generation fail
   assert.equal(body.processing_status, "draft_fallback");
   assert.ok(extractionCalls >= 2);
   assert.equal(draftCalls, 1);
-  assert.match(body.result.present_illness, /已核验事实顺序稿/);
+  assert.match(body.result.present_illness, /首发或确诊时间/);
+  assert.match(body.result.present_illness, /本次因进一步评估入院/);
+  assert.doesNotMatch(body.result.present_illness, /AI连贯合成未完成|已核验事实顺序稿/);
   assert.doesNotMatch(body.result.present_illness, /高血压|糖尿病|转移/);
+});
+
+test("keeps raw unparsed reports outside chief complaint and present illness", async () => {
+  const { response } = await analyzeLongSourceWithMockModel(true, true);
+  assert.equal(response.status, 200, await response.clone().text());
+  const body = await response.json();
+  assert.equal(body.processing_status, "draft_fallback");
+  assert.equal(body.fact_fallback_count, body.chunk_count);
+  assert.match(body.result.chief_complaint, /疾病或主要症状待补/);
+  assert.match(body.result.chief_complaint, /病程时间待补/);
+  assert.match(body.result.present_illness, /首发或确诊时间、发现方式及诊断经过待补/);
+  assert.doesNotMatch(body.result.present_illness, /完全合成检查摘要|视觉转录|###|AI连贯合成未完成|已核验事实顺序稿/);
 });
 
 test("keeps unparsed long-source segments as pending source-bound facts", async () => {

@@ -345,8 +345,8 @@ export default function Home() {
       const payload = await readPayload(response) as { result?: AnalysisResult; processing_status?: "complete" | "draft_fallback"; fact_fallback_count?: number; error?: string };
       if (!response.ok || !payload.result) throw new Error(payload.error || "AI整理失败，请稍后重试。");
       const notices = [
-        payload.fact_fallback_count ? `${payload.fact_fallback_count}段资料未通过结构化校验，原文已保留为“待人工复核事实”，没有丢弃整份任务。` : "",
-        payload.processing_status === "draft_fallback" ? "AI连贯合成未完成，当前先显示事实顺序稿与候选模板，可继续核对编辑，无需重新上传资料。" : "",
+        payload.fact_fallback_count ? `${payload.fact_fallback_count}段资料未通过结构化校验，原文仅保留在来源与待核对区，没有写入主诉或现病史。` : "",
+        payload.processing_status === "draft_fallback" ? "连贯合成未完成，当前显示已结构化事实与可填写骨架；可继续核对编辑，无需重新上传资料。" : "",
       ].filter(Boolean);
       if (notices.length) setAnalysisNotice(notices.join(" "));
       setDraft(payload.result); setStage("result"); void generateClinicalReference(payload.result);

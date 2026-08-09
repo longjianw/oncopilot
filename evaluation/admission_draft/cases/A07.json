@@ -1,0 +1,62 @@
+{
+  "case_id": "A07",
+  "case_name": "结构化失败时原始报告不得进入主诉现病史",
+  "synthetic": true,
+  "source_text": "【完全合成检验资料】检验报告标题、样本编号及多项检验值，当前未完成结构化。",
+  "current_purpose": "进一步评估",
+  "gold": {
+    "required_facts": [],
+    "forbidden_draft_patterns": [
+      { "section": "present_illness", "patterns": ["AI连贯合成未完成", "已核验事实顺序稿"], "label": "P0_PENDING_SOURCE_AS_VERIFIED" },
+      { "section": "present_illness", "patterns": ["###\\s*检验报告", "样本编号", "\\*白细胞计数"], "label": "P1_RAW_REPORT_IN_PRESENT_ILLNESS" },
+      { "section": "chief_complaint", "patterns": ["肿瘤相关资料待核对"], "label": "P2_GENERIC_NONCLINICAL_CHIEF_COMPLAINT" }
+    ],
+    "required_template_markers": [
+      { "section": "chief_complaint", "any": ["疾病或主要症状待补"] },
+      { "section": "present_illness", "any": ["首发或确诊时间", "诊断经过待补"] }
+    ]
+  },
+  "reference_output": {
+    "sources": [
+      { "source_id": "S1", "title": "第1段资料（结构化待复核）", "evidence": "完全合成检验资料" }
+    ],
+    "facts": [
+      { "fact_id": "F1", "field": "unparsed_source_segment", "value": "完全合成检验资料待结构化", "event_time": "待核对", "event_type": "other", "encounter_scope": "unclear", "certainty": "pending", "source_ids": ["S1"] }
+    ],
+    "draft": {
+      "chief_complaint": "【疾病或主要症状待补】【病程时间待补】，进一步评估",
+      "present_illness": "患者【首发或确诊时间、发现方式及诊断经过待补】。病理及关键检查结果【待核对】。既往治疗经过及疗效【待补】。近期病情变化及伴随症状【待核对】。本次因进一步评估入院。",
+      "past_history": "",
+      "personal_history": "",
+      "family_history": "",
+      "allergy_history": "",
+      "specialist_exam": "",
+      "diagnosis_summary": "",
+      "plan_summary": ""
+    }
+  },
+  "constructed_failure": {
+    "sources": [
+      { "source_id": "S1", "title": "检验报告", "evidence": "完全合成检验资料" }
+    ],
+    "facts": [
+      { "fact_id": "F1", "field": "unparsed_source_segment", "value": "完全合成检验资料待结构化", "event_time": "待核对", "event_type": "other", "encounter_scope": "unclear", "certainty": "pending", "source_ids": ["S1"] }
+    ],
+    "draft": {
+      "chief_complaint": "肿瘤相关资料待核对，进一步评估",
+      "present_illness": "【AI连贯合成未完成，以下为已核验事实顺序稿】### 检验报告；样本编号：SYN-001；*白细胞计数待核对。",
+      "past_history": "",
+      "personal_history": "",
+      "family_history": "",
+      "allergy_history": "",
+      "specialist_exam": "",
+      "diagnosis_summary": "",
+      "plan_summary": ""
+    }
+  },
+  "expected_failure_labels": [
+    "P0_PENDING_SOURCE_AS_VERIFIED",
+    "P1_RAW_REPORT_IN_PRESENT_ILLNESS",
+    "P2_GENERIC_NONCLINICAL_CHIEF_COMPLAINT"
+  ]
+}

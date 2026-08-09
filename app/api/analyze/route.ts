@@ -137,11 +137,10 @@ const mergeExtractions = (parts: FactExtraction[], currentPurpose: string): Fact
 
 const rawChunkExtraction = (chunk: string, chunkIndex: number): FactExtraction => {
   const rawSourceId = "RAW";
-  const firstLine = chunk.split("\n").find((line) => line.trim())?.replace(/[【】]/g, "").slice(0, 150) || `第${chunkIndex + 1}段资料`;
   const pieces = Array.from({ length: Math.ceil(chunk.length / 700) }, (_, index) => chunk.slice(index * 700, (index + 1) * 700)).filter((piece) => piece.trim());
   return {
     current_purpose: null,
-    sources: [{ source_id: rawSourceId, title: `${firstLine}（结构化待复核）`, evidence: chunk.slice(0, 500) }],
+    sources: [{ source_id: rawSourceId, title: `第${chunkIndex + 1}段资料（结构化待复核）`, evidence: chunk.slice(0, 500) }],
     facts: pieces.map((piece, index) => ({
       fact_id: `RAW-F${index + 1}`,
       field: "unparsed_source_segment",
@@ -178,16 +177,27 @@ const extractFacts = async (baseUrl: string, apiKey: string, model: string, sour
 };
 
 const fallbackDraftFromFacts = (extraction: FactExtraction): AdmissionDraft => {
-  const values = (eventType: string) => extraction.facts.filter((fact) => fact.event_type === eventType).map((fact) => fact.value);
-  const chronology = ["onset_diagnosis", "pathology_molecular", "prior_treatment", "progression_evidence", "current_status", "current_purpose"]
-    .flatMap(values);
-  const diagnosis = extraction.facts.find((fact) => fact.event_type === "onset_diagnosis")?.value || "肿瘤相关资料待核对";
-  const purpose = extraction.current_purpose || values("current_purpose")[0] || "进一步评估";
+  const usableFacts = extraction.facts.filter((fact) => fact.certainty !== "pending" && fact.field !== "unparsed_source_segment");
+  const values = (eventType: string) => usableFacts.filter((fact) => fact.event_type === eventType).map((fact) => fact.value);
   const join = (items: string[]) => [...new Set(items.map((item) => item.trim()).filter(Boolean))].join("；");
-  const present = join(chronology) || join(extraction.facts.map((fact) => fact.value));
+  const diagnosis = usableFacts.find((fact) => fact.event_type === "onset_diagnosis")?.value.trim() || "";
+  const purpose = extraction.current_purpose || values("current_purpose")[0] || "";
+  const diagnosisHasDuration = /(?:\d+|[一二三四五六七八九十数半两]+)\s*(?:小时|天|周|月|年)/.test(diagnosis);
+  const chiefComplaint = `${diagnosis || "【疾病或主要症状待补】"}${diagnosisHasDuration ? "" : "【病程时间待补】"}，${purpose || "【本次来院目的待补】"}`;
+  const onset = join(values("onset_diagnosis"));
+  const pathology = join(values("pathology_molecular"));
+  const priorTreatment = join(values("prior_treatment"));
+  const progression = join([...values("progression_evidence"), ...values("current_status")]);
+  const presentIllness = [
+    onset ? `${onset}。` : "患者【首发或确诊时间、发现方式及诊断经过待补】。",
+    pathology ? `${pathology}。` : "病理及关键检查结果【待核对】。",
+    priorTreatment ? `${priorTreatment}。` : "既往治疗经过及疗效【待补】。",
+    progression ? `${progression}。` : "近期病情变化及伴随症状【待核对】。",
+    purpose ? `本次因${purpose}入院。` : "本次来院目的【待补】。",
+  ].join("");
   return {
-    chief_complaint: `${diagnosis.slice(0, 60)}，${purpose.slice(0, 30)}`.slice(0, 100),
-    present_illness: `【AI连贯合成未完成，以下为已核验事实顺序稿】${present || "已提取资料待医生核对"}。`,
+    chief_complaint: chiefComplaint.slice(0, 100),
+    present_illness: presentIllness,
     past_history: join(values("past_history")),
     personal_history: join(values("personal_history")),
     family_history: join(values("family_history")),
