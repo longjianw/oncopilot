@@ -2,6 +2,7 @@
 
 import { ChangeEvent, FormEvent, ReactNode, useEffect, useState } from "react";
 import Image from "next/image";
+import type { ClinicalReferenceBundle } from "../lib/clinical-reference";
 
 type Stage = "input" | "result";
 type UploadStatus = "preparing" | "recognizing" | "done" | "error";
@@ -170,6 +171,10 @@ export default function Home() {
   const [chatLoading, setChatLoading] = useState(false);
   const [chatModel, setChatModel] = useState<ChatModel>("deepseek-v4-flash");
   const [chatElapsed, setChatElapsed] = useState(0);
+  const [clinicalReference, setClinicalReference] = useState<ClinicalReferenceBundle | null>(null);
+  const [referenceLoading, setReferenceLoading] = useState(false);
+  const [verificationLoading, setVerificationLoading] = useState<"local" | "web" | null>(null);
+  const [referenceNotice, setReferenceNotice] = useState("");
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
   const busy = uploads.some((item) => item.status === "preparing" || item.status === "recognizing");
@@ -287,6 +292,38 @@ export default function Home() {
     finally { setChatLoading(false); }
   };
 
+  const generateClinicalReference = async (result: AnalysisResult) => {
+    setReferenceLoading(true); setReferenceNotice(""); setClinicalReference(null);
+    try {
+      const response = await fetch("/api/clinical-reference", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "generate", facts: result.facts, current_purpose: currentPurpose }) });
+      const payload = await response.json() as { result?: ClinicalReferenceBundle; error?: string };
+      if (!response.ok || !payload.result) throw new Error(payload.error || "AI参考暂时没有生成出来。");
+      setClinicalReference(payload.result);
+    } catch (caught) { setReferenceNotice(caught instanceof Error ? caught.message : "AI参考暂时没有生成出来。"); }
+    finally { setReferenceLoading(false); }
+  };
+
+  const verifyClinicalReference = async (action: "local" | "web") => {
+    if (!draft || !clinicalReference || verificationLoading) return;
+    setVerificationLoading(action); setReferenceNotice("");
+    try {
+      const response = await fetch("/api/clinical-reference", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, facts: draft.facts, current_purpose: currentPurpose, reference: clinicalReference }) });
+      const payload = await response.json() as { result?: ClinicalReferenceBundle; error?: string };
+      if (!response.ok || !payload.result) throw new Error(payload.error || "交叉核验暂时失败。");
+      setClinicalReference(payload.result);
+    } catch (caught) { setReferenceNotice(caught instanceof Error ? caught.message : "交叉核验暂时失败。"); }
+    finally { setVerificationLoading(null); }
+  };
+
+  const adoptReference = (field: "diagnosis_summary" | "plan_summary") => {
+    if (!clinicalReference) return;
+    const content = field === "diagnosis_summary"
+      ? [`【AI参考候选，待医生核对】`, `初步诊断：${clinicalReference.preliminary_diagnosis}`, `诊断依据：${clinicalReference.diagnostic_basis.join("；") || "待结合原始报告补充"}`, `鉴别诊断：${clinicalReference.differential_diagnosis.join("；") || "待医生确认是否需要"}`].join("\n")
+      : [`【AI参考候选，待医生核对】`, `尚缺前提：${clinicalReference.missing_prerequisites.join("；")}`, `候选检查/评估：`, ...clinicalReference.suggested_workup.map((item, index) => `${index + 1}. ${item.title}（条件：${item.trigger}；目的：${item.purpose}）`), `分层诊疗方向：`, ...clinicalReference.treatment_pathways.map((item, index) => `${index + 1}. ${item.title}（条件：${item.trigger}；目的：${item.purpose}）`)].join("\n");
+    updateDraft(field, content);
+    setReferenceNotice(field === "diagnosis_summary" ? "已填入诊断整理区，请医生逐项核对后删除候选标记。" : "已填入计划整理区，请医生按本院流程和患者实际情况核对。" );
+  };
+
   const analyze = async () => {
     if (sourceText.trim().length < 20 || loading) return;
     setLoading(true); setError("");
@@ -294,7 +331,7 @@ export default function Home() {
       const response = await fetch("/api/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source_text: sourceText, current_purpose: currentPurpose }) });
       const payload = await readPayload(response) as { result?: AnalysisResult; error?: string };
       if (!response.ok || !payload.result) throw new Error(payload.error || "AI整理失败，请稍后重试。");
-      setDraft(payload.result); setStage("result");
+      setDraft(payload.result); setStage("result"); void generateClinicalReference(payload.result);
     } catch (caught) { setError(caught instanceof Error ? caught.message : "AI整理失败，请稍后重试。"); } finally { setLoading(false); }
   };
 
@@ -343,7 +380,7 @@ export default function Home() {
     setSourceText(await file.text()); setError("");
   };
 
-  const reset = () => { setStage("input"); setSourceText(""); setCurrentPurpose(""); setDraft(null); setUploads([]); setSelectedChoices({}); setChoiceDetails({}); setAppliedChoiceText({}); setRecomposeNotice(""); setChatOpen(false); setChatContext("当前模板整体"); setChatMessages([]); setChatInput(""); setChatModel("deepseek-v4-flash"); setChatElapsed(0); setCopied(false); setError(""); };
+  const reset = () => { setStage("input"); setSourceText(""); setCurrentPurpose(""); setDraft(null); setUploads([]); setSelectedChoices({}); setChoiceDetails({}); setAppliedChoiceText({}); setRecomposeNotice(""); setChatOpen(false); setChatContext("当前模板整体"); setChatMessages([]); setChatInput(""); setChatModel("deepseek-v4-flash"); setChatElapsed(0); setClinicalReference(null); setReferenceLoading(false); setVerificationLoading(null); setReferenceNotice(""); setCopied(false); setError(""); };
   const copyDraft = async () => {
     if (!draft) return;
     const text = sectionLabels.map(({ field, label }) => draft[field].trim() ? `${label}：\n${draft[field].trim()}` : "").filter(Boolean).join("\n\n");
@@ -388,6 +425,18 @@ export default function Home() {
         })}</div></section>)}</div>
         <div className="recompose-bar"><div><strong>选择和填空完成后</strong><span>让 AI 去重、调整顺序，并重新组织主诉、现病史和其他模块。</span>{recomposeNotice && <small>{recomposeNotice}</small>}</div><button type="button" disabled={recomposeLoading || confirmations().length === 0} onClick={recomposeDraft}>{recomposeLoading ? "正在重新整理…" : "一键重新整理草稿"}</button></div>
       </section>}
+      <section className="clinical-reference-panel">
+        <div className="reference-heading"><div><span>诊断与下一步 · AI参考候选</span><h2>先快速给一版，再用资料和网络交叉核验</h2><p>这里允许AI提出有条件的检查和分层诊疗方向；它与正式病历分开，只有医生主动采纳后才进入诊断/计划整理。</p></div><div className="reference-actions"><button type="button" disabled={referenceLoading} onClick={() => generateClinicalReference(draft)}>{referenceLoading ? "正在快速生成…" : "重新生成AI参考"}</button><button type="button" disabled={!clinicalReference || Boolean(verificationLoading)} onClick={() => verifyClinicalReference("local")}>{verificationLoading === "local" ? "本地核验中…" : "用CSCO来源卡核验"}</button><button type="button" disabled={!clinicalReference || Boolean(verificationLoading)} onClick={() => verifyClinicalReference("web")}>{verificationLoading === "web" ? "联网核验中…" : "联网核验权威网页"}</button></div></div>
+        {referenceLoading && <div className="reference-loading"><i className="spinner" /> 正在根据结构化事实生成初步诊断、候选检查和分层诊疗路径……</div>}
+        {clinicalReference && <div className="reference-content">
+          <div className="reference-state"><strong>{clinicalReference.verification_state === "model_only" ? "模型初稿 · 未核验" : clinicalReference.verification_state === "local_checked" ? "已用本地来源卡核验" : "已联网读取权威网页核验"}</strong><span>{clinicalReference.disclaimer}</span></div>
+          <div className="reference-grid"><article><h3>初步诊断与依据</h3><p><b>初步诊断：</b>{clinicalReference.preliminary_diagnosis}</p><p><b>诊断依据：</b>{clinicalReference.diagnostic_basis.join("；") || "待补"}</p><p><b>鉴别诊断：</b>{clinicalReference.differential_diagnosis.join("；") || "待医生确认"}</p><button type="button" onClick={() => adoptReference("diagnosis_summary")}>填入诊断整理</button></article><article><h3>尚缺关键前提</h3><ul>{clinicalReference.missing_prerequisites.map((item) => <li key={item}>{item}</li>)}</ul></article></div>
+          <div className="reference-paths"><article><h3>候选检查与评估</h3>{clinicalReference.suggested_workup.map((item) => <div key={`${item.title}-${item.trigger}`}><strong>{item.title}</strong><span>何时考虑：{item.trigger}</span><small>目的：{item.purpose}</small></div>)}</article><article><h3>分层诊疗方向</h3>{clinicalReference.treatment_pathways.map((item) => <div key={`${item.title}-${item.trigger}`}><strong>{item.title}</strong><span>适用前提：{item.trigger}</span><small>讨论目的：{item.purpose}</small></div>)}</article></div>
+          <button type="button" className="adopt-plan" onClick={() => adoptReference("plan_summary")}>把候选路径填入计划整理</button>
+          {clinicalReference.checks && <div className="reference-checks"><h3>交叉核验结果</h3>{clinicalReference.checks.map((check) => <div key={`${check.topic}-${check.source}`} className={check.status}><b>{check.status === "supported" ? "来源支持" : check.status === "conditional" ? "有条件支持" : "本次未找到"}</b><span><strong>{check.topic}</strong><small>{check.note}</small><em>{check.url ? <a href={check.url} target="_blank" rel="noreferrer">{check.source}</a> : check.source}</em></span></div>)}</div>}
+        </div>}
+        {referenceNotice && <p className="reference-notice">{referenceNotice}</p>}
+      </section>
       <div className="draft-grid">
         {sectionLabels.map(({ field, label, hint, placeholder, large }) => <section className={`draft-section ${large ? "wide" : ""} ${field === "diagnosis_summary" || field === "plan_summary" ? "doctor-only" : ""}`} key={field}>
           <div><label htmlFor={field}>{label}</label><span className="draft-heading-actions"><small>{hint}</small>{doctorOutlines[field] && !draft[field].trim() && <button type="button" onClick={() => insertDoctorOutline(field)}>插入医生确认大纲</button>}</span></div>

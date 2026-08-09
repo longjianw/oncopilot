@@ -231,6 +231,45 @@ button { cursor: pointer; }
 .recompose-bar small { margin-top: 5px; color: var(--green); font-size: 8px; font-weight: 750; }
 .recompose-bar button { min-width: 170px; padding: 10px 13px; border: 0; border-radius: 9px; color: white; background: var(--blue); font-size: 10px; font-weight: 850; }
 .recompose-bar button:disabled { cursor: not-allowed; opacity: .45; }
+.clinical-reference-panel { margin-top: 14px; padding: 22px; border: 1px solid #cfd8eb; border-radius: 16px; background: linear-gradient(135deg, #fbfcff, #f4f8fd); box-shadow: 0 12px 32px rgba(34,62,104,.06); }
+.reference-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
+.reference-heading span { color: #486798; font-size: 9px; font-weight: 900; letter-spacing: .7px; }
+.reference-heading h2 { margin: 5px 0 0; color: var(--navy); font-size: 19px; }
+.reference-heading p { max-width: 620px; margin: 7px 0 0; color: var(--muted); font-size: 9px; line-height: 1.65; }
+.reference-actions { min-width: 190px; display: grid; gap: 7px; }
+.reference-actions button, .reference-grid article button, .adopt-plan { padding: 8px 10px; border: 1px solid #bfcde3; border-radius: 8px; color: #345984; background: white; font-size: 8px; font-weight: 850; }
+.reference-actions button:first-child { color: white; border-color: #446fa3; background: #446fa3; }
+.reference-actions button:disabled { cursor: not-allowed; opacity: .48; }
+.reference-loading { margin-top: 16px; padding: 14px; display: flex; align-items: center; gap: 9px; border-radius: 10px; color: #557087; background: white; font-size: 9px; }
+.reference-loading .spinner { border-color: #d6e1ec; border-top-color: #446fa3; }
+.reference-content { margin-top: 16px; }
+.reference-state { padding: 11px 13px; display: flex; align-items: center; gap: 11px; border-radius: 9px; color: #775d25; background: #fff8e9; font-size: 8px; line-height: 1.5; }
+.reference-state strong { white-space: nowrap; }
+.reference-grid, .reference-paths { margin-top: 10px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.reference-grid article, .reference-paths article { padding: 14px; border: 1px solid #dce4ef; border-radius: 11px; background: white; }
+.reference-grid h3, .reference-paths h3, .reference-checks h3 { margin: 0 0 9px; color: #274a72; font-size: 11px; }
+.reference-grid p { margin: 6px 0; color: #405b6c; font-size: 9px; line-height: 1.65; }
+.reference-grid ul { margin: 0; padding-left: 17px; color: #405b6c; font-size: 9px; line-height: 1.8; }
+.reference-grid article button { margin-top: 8px; }
+.reference-paths article > div { padding: 9px 0; border-top: 1px solid #edf1f5; }
+.reference-paths article > div:first-of-type { padding-top: 0; border-top: 0; }
+.reference-paths strong, .reference-paths span, .reference-paths small { display: block; }
+.reference-paths strong { color: #243f54; font-size: 9px; }
+.reference-paths span { margin-top: 3px; color: #5f7480; font-size: 8px; line-height: 1.5; }
+.reference-paths small { margin-top: 2px; color: #84939b; font-size: 8px; line-height: 1.5; }
+.adopt-plan { margin-top: 10px; color: white; border-color: #446fa3; background: #446fa3; }
+.reference-checks { margin-top: 12px; padding: 14px; border: 1px solid #dce4ef; border-radius: 11px; background: white; }
+.reference-checks > div { padding: 9px 0; display: grid; grid-template-columns: 72px 1fr; gap: 10px; border-top: 1px solid #edf1f5; }
+.reference-checks > div:first-of-type { border-top: 0; }
+.reference-checks > div > b { align-self: start; padding: 5px 6px; border-radius: 6px; color: #6f5a2c; background: #fff4d9; font-size: 7px; text-align: center; }
+.reference-checks > div.supported > b { color: #22624f; background: #e8f5ef; }
+.reference-checks > div.not_found > b { color: #8a4f47; background: #fbecea; }
+.reference-checks span strong, .reference-checks span small, .reference-checks span em { display: block; }
+.reference-checks span strong { color: #294858; font-size: 9px; }
+.reference-checks span small { margin-top: 3px; color: #677c87; font-size: 8px; line-height: 1.5; }
+.reference-checks span em { margin-top: 3px; color: #83939c; font-size: 7px; font-style: normal; }
+.reference-checks a { color: var(--blue); }
+.reference-notice { margin: 10px 0 0; color: #4d7667; font-size: 8px; font-weight: 750; }
 .draft-grid { margin-top: 14px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .draft-section { padding: 18px; border: 1px solid var(--line); border-radius: 14px; background: white; box-shadow: 0 10px 28px rgba(32,75,94,.05); }
 .draft-section.wide { grid-column: 1 / -1; }
@@ -299,6 +338,10 @@ button { cursor: pointer; }
   .detail-fill { grid-template-columns: 1fr; }
   .recompose-bar { align-items: stretch; flex-direction: column; }
   .recompose-bar button { width: 100%; }
+  .reference-heading { display: block; }
+  .reference-actions { margin-top: 14px; }
+  .reference-grid, .reference-paths { grid-template-columns: 1fr; }
+  .reference-state { align-items: flex-start; flex-direction: column; }
   .draft-section > div { align-items: flex-start; flex-direction: column; gap: 4px; }
   .draft-section > div small { text-align: left; }
   .floating-chat { right: 14px; bottom: 14px; }

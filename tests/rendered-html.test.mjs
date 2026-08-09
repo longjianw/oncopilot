@@ -137,6 +137,38 @@ async function templateChatWithMockModel(model = "deepseek-v4-pro") {
   } finally { globalThis.fetch = originalFetch; }
 }
 
+async function clinicalReferenceWithMockModel(action = "generate") {
+  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
+  workerUrl.searchParams.set("reference-test", `${process.pid}-${Date.now()}-${action}`);
+  const { default: worker } = await import(workerUrl.href);
+  const generated = {
+    preliminary_diagnosis: "黑色素瘤（病理提示，分期待补）",
+    diagnostic_basis: ["病理及免疫组化提示黑色素瘤"],
+    differential_diagnosis: ["病理原文不完整时考虑病理复核"],
+    missing_prerequisites: ["原发部位", "Breslow厚度与溃疡", "区域淋巴结和全身分期"],
+    suggested_workup: [
+      { title: "复核完整病理", trigger: "报告原文未提供", purpose: "补齐病理关键参数" },
+      { title: "完善分期评估", trigger: "当前分期资料不足", purpose: "评估区域淋巴结与远处病灶" },
+      { title: "评估分子检测", trigger: "系统治疗讨论需要分子状态时", purpose: "支持后续分层讨论" },
+    ],
+    treatment_pathways: [
+      { title: "局限可切除路径", trigger: "分期支持局限可切除时", purpose: "进入外科和区域淋巴结管理评估" },
+      { title: "不可切除或晚期路径", trigger: "上级医师结合分期确认时", purpose: "讨论系统治疗方向" },
+    ],
+  };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ output_text: JSON.stringify(generated) }), { status: 200 });
+  const facts = [{ fact_id: "F1", field: "diagnosis", value: "确诊黑色素瘤3天", event_time: "3天前", event_type: "onset_diagnosis", encounter_scope: "prior", certainty: "explicit", source_ids: ["S1"] }];
+  const reference = { ...generated, verification_state: "model_only", disclaimer: "AI参考候选" };
+  try {
+    return await worker.fetch(
+      new Request("http://localhost/api/clinical-reference", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action, facts, current_purpose: "进一步评估", ...(action === "local" ? { reference } : {}) }) }),
+      { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) }, ARK_CODING_API_KEY: "synthetic-test-key" },
+      { waitUntil() {}, passThroughOnException() {} },
+    );
+  } finally { globalThis.fetch = originalFetch; }
+}
+
 test("renders the single-entry admission draft package workflow", async () => {
   const response = await render();
   assert.equal(response.status, 200);
@@ -167,6 +199,11 @@ test("renders the single-entry admission draft package workflow", async () => {
   assert.match(pageSource, /parseEventStream/);
   assert.doesNotMatch(pageSource, /补充记录：/);
   assert.match(pageSource, /插入医生确认大纲/);
+  assert.match(pageSource, /诊断与下一步 · AI参考候选/);
+  assert.match(pageSource, /用CSCO来源卡核验/);
+  assert.match(pageSource, /联网核验权威网页/);
+  assert.match(pageSource, /填入诊断整理/);
+  assert.match(pageSource, /把候选路径填入计划整理/);
   assert.doesNotMatch(html, /进入管床/);
   assert.doesNotMatch(html, /合成患者 A02/);
   assert.doesNotMatch(html, /codex-preview/);
@@ -244,4 +281,24 @@ test("template chat rejects models outside the documented selector", async () =>
   assert.equal(response.status, 400);
   const body = await response.json();
   assert.match(body.error, /不支持的模型/);
+});
+
+test("generates a useful conditional clinical reference without executable prescriptions", async () => {
+  const response = await clinicalReferenceWithMockModel();
+  assert.equal(response.status, 200, await response.clone().text());
+  const body = await response.json();
+  assert.equal(body.result.verification_state, "model_only");
+  assert.match(body.result.preliminary_diagnosis, /黑色素瘤/);
+  assert.ok(body.result.suggested_workup.length >= 3);
+  assert.ok(body.result.treatment_pathways.length >= 2);
+  assert.doesNotMatch(JSON.stringify(body.result), /每日|每次|mg|静滴/);
+});
+
+test("cross-checks the generated reference against the local CSCO source card", async () => {
+  const response = await clinicalReferenceWithMockModel("local");
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.result.verification_state, "local_checked");
+  assert.ok(body.result.checks.some((check) => /2025 CSCO/.test(check.source)));
+  assert.ok(body.result.checks.some((check) => /治疗方向/.test(check.topic) && check.status === "conditional"));
 });
