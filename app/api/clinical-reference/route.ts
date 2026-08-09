@@ -57,25 +57,36 @@ export async function POST(request: Request) {
       if (!reference || typeof reference !== "object") return Response.json({ error: "请先生成AI参考候选。" }, { status: 400 });
       const nciUrl = "https://www.cancer.gov/types/skin/hp/melanoma-treatment-pdq";
       const nhcUrl = "https://www.nhc.gov.cn/yzygj/c100068/202204/0c1f7d3aca0545abbeb02030ce255930.shtml";
-      const [nci, nhc] = await Promise.all([
+      const [nciResult, nhcResult] = await Promise.allSettled([
         fetch(nciUrl, { headers: { "User-Agent": "OncoPilot-reference-check/0.1" }, signal: AbortSignal.timeout(15000) }),
         fetch(nhcUrl, { headers: { "User-Agent": "OncoPilot-reference-check/0.1" }, signal: AbortSignal.timeout(15000) }),
       ]);
-      if (!nci.ok || !nhc.ok) return Response.json({ error: "权威网页本次未能同时读取，请稍后重试。" }, { status: 502 });
-      const nciText = stripHtml(await nci.text());
-      const nhcText = stripHtml(await nhc.text());
-      const excerpts = `${sourceWindow(nciText, /Diagnosis|Treatment Option Overview/i)}\nNHC发布页：${sourceWindow(nhcText, /黑色素瘤/, 1200)}`.slice(0, 28000);
+      const nci = nciResult.status === "fulfilled" && nciResult.value.ok ? nciResult.value : null;
+      const nhc = nhcResult.status === "fulfilled" && nhcResult.value.ok ? nhcResult.value : null;
+      if (!nci && !nhc) return Response.json({ error: "权威网页本次均未能读取，请稍后重试。" }, { status: 502 });
+      const excerpts: string[] = [];
+      const availableSources: string[] = [];
+      if (nci) {
+        const nciText = stripHtml(await nci.text());
+        excerpts.push(`NCI专业版：${sourceWindow(nciText, /Diagnosis|Treatment Option Overview/i)}`);
+        availableSources.push(`NCI Melanoma Treatment PDQ ${nciUrl}`);
+      }
+      if (nhc) {
+        const nhcText = stripHtml(await nhc.text());
+        excerpts.push(`国家卫健委发布页：${sourceWindow(nhcText, /黑色素瘤/, 1200)}`);
+        availableSources.push(`国家卫健委黑色素瘤诊疗指南发布页 ${nhcUrl}`);
+      }
       const prompt = [
         "你是肿瘤诊疗参考的来源核对器，只做交叉核对，不制定患者医嘱。",
         "根据本次实时读取的官方网页摘录，逐项检查AI参考候选。status只能是supported、conditional或not_found。conditional用于方向存在但患者适用前提不足。不要补充剂量、处方或新的患者事实。",
         "只返回JSON：{\"checks\":[{\"topic\":\"\",\"status\":\"conditional\",\"note\":\"\",\"source\":\"\",\"url\":\"\"}]}。",
         `已知事实：${JSON.stringify(facts)}`,
         `AI参考候选：${JSON.stringify(reference)}`,
-        `官方网页摘录：${excerpts}`,
-        `来源URL：NCI ${nciUrl}；国家卫健委 ${nhcUrl}`,
+        `官方网页摘录：${excerpts.join("\n").slice(0, 28000)}`,
+        `本次实际成功读取的来源（只能引用这些）：${availableSources.join("；")}`,
       ].join("\n\n");
       const checks = parseChecks(await requestModel(baseUrl, apiKey, "deepseek-v4-pro", prompt, { maxOutputTokens: 1200, timeoutMs: 75000 }));
-      return Response.json({ result: { ...reference, verification_state: "web_checked", checks, disclaimer: "本次已读取NCI专业版和国家卫健委发布页进行交叉核对；网页支持不等于患者适用，最终诊断和医嘱仍由医生结合完整资料确认。" } });
+      return Response.json({ result: { ...reference, verification_state: "web_checked", checks, disclaimer: `本次已读取${availableSources.map((source) => source.split(" http")[0]).join("、")}进行交叉核对；未成功读取的来源不计入核验。网页支持不等于患者适用，最终诊断和医嘱仍由医生结合完整资料确认。` } });
     }
 
     const prompt = [
