@@ -1,5 +1,5 @@
-import { containsSensitiveIdentifier, parseModelJson, requestModel } from "../../../lib/model-api";
-import { ClinicalReferenceBundle, localReferenceChecks, parseClinicalReference, ReferenceCheck, starterClinicalReference } from "../../../lib/clinical-reference";
+import { containsSensitiveIdentifier, requestModel } from "../../../lib/model-api";
+import { ClinicalReferenceBundle, localReferenceChecks, parseClinicalReference, starterClinicalReference, webReferenceChecks } from "../../../lib/clinical-reference";
 
 type Fact = { field?: unknown; value?: unknown; event_time?: unknown; event_type?: unknown; encounter_scope?: unknown; certainty?: unknown; source_ids?: unknown };
 
@@ -11,23 +11,6 @@ const stripHtml = (value: string) => value
   .replace(/&nbsp;|&#160;/gi, " ")
   .replace(/&amp;/gi, "&")
   .replace(/\s+/g, " ");
-
-const sourceWindow = (text: string, term: RegExp, radius = 6000) => {
-  const index = text.search(term);
-  return index < 0 ? text.slice(0, radius * 2) : text.slice(Math.max(0, index - radius), index + radius);
-};
-
-const parseChecks = (raw: string): ReferenceCheck[] => {
-  const parsed = parseModelJson(raw) as { checks?: unknown };
-  if (!Array.isArray(parsed.checks)) return [];
-  return parsed.checks.flatMap((item) => {
-    if (!item || typeof item !== "object") return [];
-    const check = item as Partial<ReferenceCheck>;
-    if (typeof check.topic !== "string" || typeof check.note !== "string" || typeof check.source !== "string") return [];
-    const status = check.status === "supported" || check.status === "conditional" || check.status === "not_found" ? check.status : "not_found";
-    return [{ topic: check.topic.slice(0, 80), status, note: check.note.slice(0, 400), source: check.source.slice(0, 180), ...(typeof check.url === "string" ? { url: check.url.slice(0, 500) } : {}) }];
-  }).slice(0, 8);
-};
 
 export async function POST(request: Request) {
   try {
@@ -48,46 +31,36 @@ export async function POST(request: Request) {
       return Response.json({ result: { ...reference, verification_state: "local_checked", checks: localReferenceChecks(reference), disclaimer: "已用本地来源卡交叉核对；支持仅代表候选方向可在来源中找到，仍需判断患者适用条件并由上级医师确认。" } });
     }
 
-    const apiKey = process.env.ARK_CODING_API_KEY;
-    if (!apiKey) return Response.json({ error: "模型服务尚未配置。" }, { status: 503 });
-    const baseUrl = (process.env.ARK_CODING_BASE_URL || "https://ark.cn-beijing.volces.com/api/coding/v3").replace(/\/$/, "");
-
     if (action === "web") {
       const reference = body.reference as ClinicalReferenceBundle;
       if (!reference || typeof reference !== "object") return Response.json({ error: "请先生成AI参考候选。" }, { status: 400 });
       const nciUrl = "https://www.cancer.gov/types/skin/hp/melanoma-treatment-pdq";
       const nhcUrl = "https://www.nhc.gov.cn/yzygj/c100068/202204/0c1f7d3aca0545abbeb02030ce255930.shtml";
       const [nciResult, nhcResult] = await Promise.allSettled([
-        fetch(nciUrl, { headers: { "User-Agent": "OncoPilot-reference-check/0.1" }, signal: AbortSignal.timeout(15000) }),
-        fetch(nhcUrl, { headers: { "User-Agent": "OncoPilot-reference-check/0.1" }, signal: AbortSignal.timeout(15000) }),
+        fetch(nciUrl, { headers: { "User-Agent": "OncoPilot-reference-check/0.1" }, signal: AbortSignal.timeout(10000) }),
+        fetch(nhcUrl, { headers: { "User-Agent": "OncoPilot-reference-check/0.1" }, signal: AbortSignal.timeout(6000) }),
       ]);
       const nci = nciResult.status === "fulfilled" && nciResult.value.ok ? nciResult.value : null;
       const nhc = nhcResult.status === "fulfilled" && nhcResult.value.ok ? nhcResult.value : null;
       if (!nci && !nhc) return Response.json({ error: "权威网页本次均未能读取，请稍后重试。" }, { status: 502 });
-      const excerpts: string[] = [];
       const availableSources: string[] = [];
+      let nciText = "";
+      let nhcText = "";
       if (nci) {
-        const nciText = stripHtml(await nci.text());
-        excerpts.push(`NCI专业版：${sourceWindow(nciText, /Diagnosis|Treatment Option Overview/i)}`);
+        nciText = stripHtml(await nci.text());
         availableSources.push(`NCI Melanoma Treatment PDQ ${nciUrl}`);
       }
       if (nhc) {
-        const nhcText = stripHtml(await nhc.text());
-        excerpts.push(`国家卫健委发布页：${sourceWindow(nhcText, /黑色素瘤/, 1200)}`);
+        nhcText = stripHtml(await nhc.text());
         availableSources.push(`国家卫健委黑色素瘤诊疗指南发布页 ${nhcUrl}`);
       }
-      const prompt = [
-        "你是肿瘤诊疗参考的来源核对器，只做交叉核对，不制定患者医嘱。",
-        "根据本次实时读取的官方网页摘录，逐项检查AI参考候选。status只能是supported、conditional或not_found。conditional用于方向存在但患者适用前提不足。不要补充剂量、处方或新的患者事实。",
-        "只返回JSON：{\"checks\":[{\"topic\":\"\",\"status\":\"conditional\",\"note\":\"\",\"source\":\"\",\"url\":\"\"}]}。",
-        `已知事实：${JSON.stringify(facts)}`,
-        `AI参考候选：${JSON.stringify(reference)}`,
-        `官方网页摘录：${excerpts.join("\n").slice(0, 28000)}`,
-        `本次实际成功读取的来源（只能引用这些）：${availableSources.join("；")}`,
-      ].join("\n\n");
-      const checks = parseChecks(await requestModel(baseUrl, apiKey, "deepseek-v4-pro", prompt, { maxOutputTokens: 1200, timeoutMs: 75000 }));
+      const checks = webReferenceChecks(reference, { nciText, nhcText, nciUrl, nhcUrl });
       return Response.json({ result: { ...reference, verification_state: "web_checked", checks, disclaimer: `本次已读取${availableSources.map((source) => source.split(" http")[0]).join("、")}进行交叉核对；未成功读取的来源不计入核验。网页支持不等于患者适用，最终诊断和医嘱仍由医生结合完整资料确认。` } });
     }
+
+    const apiKey = process.env.ARK_CODING_API_KEY;
+    if (!apiKey) return Response.json({ error: "模型服务尚未配置。" }, { status: 503 });
+    const baseUrl = (process.env.ARK_CODING_BASE_URL || "https://ark.cn-beijing.volces.com/api/coding/v3").replace(/\/$/, "");
 
     const prompt = [
       "你是OncoPilot的肿瘤入院诊疗准备助手。医生明确要求获得一版有用的AI参考，而不是空白。你可以积极给出初步诊断表达、诊断依据、需要补齐的关键前提、候选检查及其目的，以及按分期/可切除性/分子状态分支的治疗讨论方向。",

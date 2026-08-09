@@ -157,12 +157,18 @@ async function clinicalReferenceWithMockModel(action = "generate") {
     ],
   };
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () => new Response(JSON.stringify({ output_text: JSON.stringify(generated) }), { status: 200 });
+  globalThis.fetch = async (url) => {
+    if (action === "web") {
+      if (String(url).includes("cancer.gov")) return new Response("Melanoma Stage I Stage II Stage III Stage IV Treatment Option Overview surgery immunotherapy targeted therapy BRAF", { status: 200 });
+      return new Response("黑色素瘤诊疗指南", { status: 200 });
+    }
+    return new Response(JSON.stringify({ output_text: JSON.stringify(generated) }), { status: 200 });
+  };
   const facts = [{ fact_id: "F1", field: "diagnosis", value: "确诊黑色素瘤3天", event_time: "3天前", event_type: "onset_diagnosis", encounter_scope: "prior", certainty: "explicit", source_ids: ["S1"] }];
   const reference = { ...generated, verification_state: "model_only", disclaimer: "AI参考候选" };
   try {
     return await worker.fetch(
-      new Request("http://localhost/api/clinical-reference", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action, facts, current_purpose: "进一步评估", ...(action === "local" ? { reference } : {}) }) }),
+      new Request("http://localhost/api/clinical-reference", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action, facts, current_purpose: "进一步评估", ...((action === "local" || action === "web") ? { reference } : {}) }) }),
       { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) }, ARK_CODING_API_KEY: "synthetic-test-key" },
       { waitUntil() {}, passThroughOnException() {} },
     );
@@ -312,4 +318,14 @@ test("cross-checks the generated reference against the local CSCO source card", 
   assert.equal(body.result.verification_state, "local_checked");
   assert.ok(body.result.checks.some((check) => /2025 CSCO/.test(check.source)));
   assert.ok(body.result.checks.some((check) => /治疗方向/.test(check.topic) && check.status === "conditional"));
+});
+
+test("cross-checks official web sources without requiring another model JSON response", async () => {
+  const response = await clinicalReferenceWithMockModel("web");
+  assert.equal(response.status, 200, await response.clone().text());
+  const body = await response.json();
+  assert.equal(body.result.verification_state, "web_checked");
+  assert.ok(body.result.checks.some((check) => /NCI/.test(check.source)));
+  assert.ok(body.result.checks.some((check) => /国家卫生健康委/.test(check.source)));
+  assert.ok(body.result.checks.every((check) => check.url));
 });

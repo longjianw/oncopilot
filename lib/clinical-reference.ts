@@ -100,3 +100,49 @@ export function localReferenceChecks(bundle: ClinicalReferenceBundle): Reference
     },
   ];
 }
+
+export function webReferenceChecks(
+  bundle: ClinicalReferenceBundle,
+  sources: { nciText?: string; nhcText?: string; nciUrl: string; nhcUrl: string },
+): ReferenceCheck[] {
+  const candidate = JSON.stringify(bundle);
+  const checks: ReferenceCheck[] = [];
+  if (sources.nciText) {
+    const nciHasStaging = /Stage I|Stage II|Stage III|Stage IV|staging/i.test(sources.nciText);
+    const nciHasTreatment = /Treatment Option Overview|surgery|immunotherapy|targeted therapy/i.test(sources.nciText);
+    const nciHasMolecular = /BRAF|KIT|NRAS/i.test(sources.nciText);
+    checks.push(
+      {
+        topic: "分期后选择路径",
+        status: nciHasStaging && /分期|局限|转移|可切除/.test(candidate) ? "conditional" : "not_found",
+        note: "NCI专业版按疾病分期组织治疗信息；当前患者分期未明，因此只能支持“先分期、再分支讨论”的方向，不能支持某一具体方案。",
+        source: "NCI Melanoma Treatment PDQ",
+        url: sources.nciUrl,
+      },
+      {
+        topic: "治疗方式候选",
+        status: nciHasTreatment && /手术|免疫|靶向|系统治疗|局部处理/.test(candidate) ? "conditional" : "not_found",
+        note: "官方页面包含手术、免疫治疗、靶向治疗等按情境展开的治疗信息；仅说明候选方向存在，不代表适用于本患者。",
+        source: "NCI Melanoma Treatment PDQ",
+        url: sources.nciUrl,
+      },
+      {
+        topic: "分子状态与治疗讨论",
+        status: nciHasMolecular && /BRAF|c-KIT|NRAS|分子/.test(candidate) ? "conditional" : "not_found",
+        note: "官方页面包含分子靶点相关内容；是否检测及如何使用结果仍取决于病理类型、分期、标本和治疗情境。",
+        source: "NCI Melanoma Treatment PDQ",
+        url: sources.nciUrl,
+      },
+    );
+  }
+  if (sources.nhcText) {
+    checks.push({
+      topic: "中国官方指南入口",
+      status: /黑色素瘤/.test(sources.nhcText) && /指南|诊疗/.test(sources.nhcText) ? "supported" : "not_found",
+      note: "本次已读取国家卫生健康委黑色素瘤诊疗指南发布页；发布页可作为权威入口，但患者适用性仍需结合指南正文和完整资料逐项判断。",
+      source: "国家卫生健康委黑色素瘤诊疗指南发布页",
+      url: sources.nhcUrl,
+    });
+  }
+  return checks;
+}
