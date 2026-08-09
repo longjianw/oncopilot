@@ -28,6 +28,61 @@ export const parseModelJson = (text: string) => {
 
 type ModelRequestOptions = { maxOutputTokens?: number; timeoutMs?: number };
 
+const streamDelta = (payload: unknown) => {
+  if (!payload || typeof payload !== "object") return "";
+  const event = payload as { type?: unknown; delta?: unknown; choices?: Array<{ delta?: { content?: unknown } }> };
+  if (event.type === "response.output_text.delta" && typeof event.delta === "string") return event.delta;
+  const choiceDelta = event.choices?.[0]?.delta?.content;
+  return typeof choiceDelta === "string" ? choiceDelta : "";
+};
+
+export async function* requestModelStream(baseUrl: string, apiKey: string, model: string, prompt: string, options: ModelRequestOptions = {}) {
+  const upstream = await fetch(`${baseUrl}/responses`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", Accept: "text/event-stream" },
+    body: JSON.stringify({ model, input: prompt, stream: true, ...(options.maxOutputTokens ? { max_output_tokens: options.maxOutputTokens } : {}) }),
+    signal: AbortSignal.timeout(options.timeoutMs || 75000),
+  });
+  if (!upstream.ok) throw new Error(`上游模型请求失败：${upstream.status}`);
+  if (!upstream.body) throw new Error("模型没有返回可用内容");
+
+  const reader = upstream.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let yielded = false;
+  const consumeBlock = (block: string) => {
+    const data = block.split(/\r?\n/).filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).join("\n");
+    if (!data || data === "[DONE]") return "";
+    try { return streamDelta(JSON.parse(data)); } catch { return ""; }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+    let boundary = buffer.search(/\r?\n\r?\n/);
+    while (boundary >= 0) {
+      const block = buffer.slice(0, boundary);
+      const separator = buffer.slice(boundary).match(/^\r?\n\r?\n/)?.[0] || "\n\n";
+      buffer = buffer.slice(boundary + separator.length);
+      const delta = consumeBlock(block);
+      if (delta) { yielded = true; yield delta; }
+      boundary = buffer.search(/\r?\n\r?\n/);
+    }
+    if (done) break;
+  }
+
+  if (!yielded && buffer.trim()) {
+    try {
+      const text = extractModelText(JSON.parse(buffer) as ModelResponse);
+      if (text) { yielded = true; yield text; }
+    } catch {
+      const delta = consumeBlock(buffer);
+      if (delta) { yielded = true; yield delta; }
+    }
+  }
+  if (!yielded) throw new Error("模型没有返回可用内容");
+}
+
 export async function requestModel(baseUrl: string, apiKey: string, model: string, prompt: string, options: ModelRequestOptions = {}) {
   const upstream = await fetch(`${baseUrl}/responses`, {
     method: "POST",

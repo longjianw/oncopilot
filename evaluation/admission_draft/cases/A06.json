@@ -1,0 +1,57 @@
+{
+  "case_id": "A06",
+  "case_name": "选择后的自由文本必须自然融入现病史",
+  "synthetic": true,
+  "source_text": "【S1 完全合成简要资料】患者确诊黑色素瘤3天。",
+  "current_purpose": "进一步评估",
+  "gold": {
+    "required_facts": [
+      { "field": "diagnosis", "value_contains": "黑色素瘤", "encounter_scope": "prior", "certainty": "explicit", "source_ids": ["S1"] }
+    ],
+    "forbidden_draft_patterns": [
+      { "section": "present_illness", "patterns": ["补充记录[:：]"], "label": "P2_MECHANICAL_DETAIL_APPEND" }
+    ],
+    "required_review_confirmations": [
+      {
+        "choice_id": "melanoma_nodes",
+        "option_id": "yes",
+        "section": "present_illness",
+        "detail_contains": "右侧腋窝",
+        "draft_any": ["右侧腋窝淋巴结肿大"]
+      }
+    ]
+  },
+  "reference_output": {
+    "sources": [{ "source_id": "S1", "title": "完全合成资料", "evidence": "确诊黑色素瘤3天" }],
+    "facts": [{ "fact_id": "F1", "field": "diagnosis", "value": "确诊黑色素瘤3天", "event_time": "3天前", "event_type": "onset_diagnosis", "encounter_scope": "prior", "certainty": "explicit", "source_ids": ["S1"] }],
+    "draft": {
+      "chief_complaint": "确诊黑色素瘤3天",
+      "present_illness": "患者3天前确诊黑色素瘤。近期发现区域淋巴结肿大或不适，右侧腋窝淋巴结肿大，约2cm×2cm。",
+      "past_history": "",
+      "personal_history": "",
+      "family_history": "",
+      "allergy_history": "",
+      "specialist_exam": "",
+      "diagnosis_summary": "",
+      "plan_summary": ""
+    },
+    "review_confirmations": [{ "choice_id": "melanoma_nodes", "option_id": "yes", "section": "present_illness", "detail": "右侧腋窝淋巴结肿大，约2cm×2cm", "text": "近期发现区域淋巴结肿大或不适。" }]
+  },
+  "constructed_failure": {
+    "sources": [{ "source_id": "S1", "title": "完全合成资料", "evidence": "确诊黑色素瘤3天" }],
+    "facts": [{ "fact_id": "F1", "field": "diagnosis", "value": "确诊黑色素瘤3天", "event_time": "3天前", "event_type": "onset_diagnosis", "encounter_scope": "prior", "certainty": "explicit", "source_ids": ["S1"] }],
+    "draft": {
+      "chief_complaint": "确诊黑色素瘤3天",
+      "present_illness": "患者3天前确诊黑色素瘤。近期发现区域淋巴结肿大或不适。补充记录：右侧腋窝淋巴结肿大，约2cm×2cm。",
+      "past_history": "",
+      "personal_history": "",
+      "family_history": "",
+      "allergy_history": "",
+      "specialist_exam": "",
+      "diagnosis_summary": "",
+      "plan_summary": ""
+    },
+    "review_confirmations": [{ "choice_id": "melanoma_nodes", "option_id": "yes", "section": "present_illness", "detail": "右侧腋窝淋巴结肿大，约2cm×2cm", "text": "近期发现区域淋巴结肿大或不适。" }]
+  },
+  "expected_failure_labels": ["P2_MECHANICAL_DETAIL_APPEND"]
+}

@@ -40,6 +40,11 @@ const chatModelOptions: Array<{ id: ChatModel; label: string; note: string }> = 
   { id: "deepseek-v4-pro", label: "深入 · V4 Pro", note: "更强，可能等待更久" },
 ];
 
+const doctorOutlines: Partial<Record<DraftField, string>> = {
+  diagnosis_summary: "1. 【主要诊断待医生确认】（原发部位【】；病理类型【】；临床分期【】；分子状态【如已检测】）\n诊断依据：病理原文【】；专科查体【】；影像或其他证据【】。\n鉴别诊断：【是否需要及具体内容待医生确认】。",
+  plan_summary: "本次目标：【待医生确认】\n已决定补充或复核的资料：【】\n已决定的检查或评估：【】\n已决定的治疗或观察安排：【】\n复评节点及上级审核：【】",
+};
+
 const renderInlineMarkdown = (text: string): ReactNode[] => text.split(/(\*\*[^*]+\*\*)/g).filter(Boolean).map((part, index) =>
   part.startsWith("**") && part.endsWith("**") ? <strong key={index}>{part.slice(2, -2)}</strong> : <span key={index}>{part}</span>);
 
@@ -56,7 +61,34 @@ const renderConfirmedText = (option: ReviewOption, detail: string) => {
   const cleanDetail = detail.trim();
   if (!cleanDetail) return option.text;
   if (/【[^】]+】/.test(option.text)) return option.text.replace(/【[^】]+】/, cleanDetail);
-  return `${option.text} 补充记录：${cleanDetail}。`;
+  const cleanBase = option.text
+    .replace(/，[^，。]*(?:待补充|待核对)。?$/, "")
+    .replace(/[。；，\s]+$/, "");
+  return `${cleanBase}，${cleanDetail.replace(/[。；\s]+$/, "")}。`;
+};
+
+const parseEventStream = async (response: Response, onEvent: (name: string, payload: Record<string, unknown>) => void) => {
+  if (!response.body) throw new Error("浏览器没有收到流式回答。");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+    let boundary = buffer.search(/\r?\n\r?\n/);
+    while (boundary >= 0) {
+      const block = buffer.slice(0, boundary);
+      const separator = buffer.slice(boundary).match(/^\r?\n\r?\n/)?.[0] || "\n\n";
+      buffer = buffer.slice(boundary + separator.length);
+      const name = block.match(/^event:\s*(.+)$/m)?.[1]?.trim() || "message";
+      const data = block.split(/\r?\n/).filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).join("\n");
+      if (data) {
+        try { onEvent(name, JSON.parse(data) as Record<string, unknown>); } catch { /* ignore malformed event */ }
+      }
+      boundary = buffer.search(/\r?\n\r?\n/);
+    }
+    if (done) break;
+  }
 };
 
 const isHeic = (file: File) => file.type === "image/heic" || file.type === "image/heif" || /\.hei[cf]$/i.test(file.name);
@@ -225,7 +257,7 @@ export default function Home() {
     const nextHistory: ChatEntry[] = [...chatMessages, { role: "user", content: message }];
     const selectedModel = chatModel;
     const startedAt = Date.now();
-    setChatMessages(nextHistory); setChatInput(""); setChatElapsed(0); setChatLoading(true);
+    setChatMessages([...nextHistory, { role: "assistant", content: "" }]); setChatInput(""); setChatElapsed(0); setChatLoading(true);
     try {
       // Sites currently requires the trailing slash for this newly added route.
       const response = await fetch("/api/template-chat/", {
@@ -233,11 +265,25 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message, history: chatMessages.slice(-6), template_name: draft.template_name, item_context: chatContext, model: selectedModel }),
       });
-      const payload = await response.json() as { answer?: string; error?: string; model?: ChatModel };
-      if (!response.ok || !payload.answer) throw new Error(payload.error || "AI暂时没有回答，请重试。")
-      const modelLabel = chatModelOptions.find((option) => option.id === (payload.model || selectedModel))?.label || selectedModel;
-      setChatMessages((current) => [...current, { role: "assistant", content: payload.answer!, modelLabel, elapsedSeconds: Math.max(1, Math.round((Date.now() - startedAt) / 1000)) }]);
-    } catch (caught) { setChatMessages((current) => [...current, { role: "assistant", content: caught instanceof Error ? caught.message : "AI暂时没有回答，请重试。" }]); }
+      if (!response.ok) {
+        const payload = await response.json() as { error?: string };
+        throw new Error(payload.error || "AI暂时没有回答，请重试。");
+      }
+      let fullAnswer = "";
+      await parseEventStream(response, (name, payload) => {
+        if (name === "delta" && typeof payload.answer === "string") {
+          fullAnswer = payload.answer;
+          setChatMessages((current) => current.map((entry, index) => index === current.length - 1 ? { ...entry, content: fullAnswer } : entry));
+        }
+        if (name === "done" && typeof payload.answer === "string") {
+          const model = typeof payload.model === "string" ? payload.model as ChatModel : selectedModel;
+          const modelLabel = chatModelOptions.find((option) => option.id === model)?.label || model;
+          setChatMessages((current) => current.map((entry, index) => index === current.length - 1 ? { ...entry, content: payload.answer as string, modelLabel, elapsedSeconds: Math.max(1, Math.round((Date.now() - startedAt) / 1000)) } : entry));
+        }
+        if (name === "error") throw new Error(typeof payload.error === "string" ? payload.error : "AI暂时没有回答，请重试。");
+      });
+      if (!fullAnswer) throw new Error("AI暂时没有回答，请重试。");
+    } catch (caught) { setChatMessages((current) => current.map((entry, index) => index === current.length - 1 && entry.role === "assistant" ? { ...entry, content: caught instanceof Error ? caught.message : "AI暂时没有回答，请重试。" } : entry)); }
     finally { setChatLoading(false); }
   };
 
@@ -303,6 +349,11 @@ export default function Home() {
     const text = sectionLabels.map(({ field, label }) => draft[field].trim() ? `${label}：\n${draft[field].trim()}` : "").filter(Boolean).join("\n\n");
     await navigator.clipboard.writeText(text); setCopied(true); window.setTimeout(() => setCopied(false), 1600);
   };
+  const insertDoctorOutline = (field: DraftField) => {
+    const outline = doctorOutlines[field];
+    if (!outline) return;
+    updateDraft(field, draft?.[field].trim() ? `${draft[field].trim()}\n${outline}` : outline);
+  };
   const selectedCount = Object.keys(selectedChoices).length;
   const unresolvedMarkers = draft ? sectionLabels.filter(({ field }) => /【[^】]+】/.test(draft[field])).length : 0;
   const reviewGroups = draft ? (["发病与确诊", "症状核对", "其他病史", "专科查体"] as const).map((group) => ({ group, items: draft.review_items.filter((item) => item.group === group) })).filter(({ items }) => items.length) : [];
@@ -339,7 +390,7 @@ export default function Home() {
       </section>}
       <div className="draft-grid">
         {sectionLabels.map(({ field, label, hint, placeholder, large }) => <section className={`draft-section ${large ? "wide" : ""} ${field === "diagnosis_summary" || field === "plan_summary" ? "doctor-only" : ""}`} key={field}>
-          <div><label htmlFor={field}>{label}</label><small>{hint}</small></div>
+          <div><label htmlFor={field}>{label}</label><span className="draft-heading-actions"><small>{hint}</small>{doctorOutlines[field] && !draft[field].trim() && <button type="button" onClick={() => insertDoctorOutline(field)}>插入医生确认大纲</button>}</span></div>
           <textarea id={field} value={draft[field]} onChange={(event) => updateDraft(field, event.target.value)} placeholder={placeholder} rows={large ? 7 : 4} />
         </section>)}
       </div>

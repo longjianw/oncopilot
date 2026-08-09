@@ -1,4 +1,4 @@
-import { containsSensitiveIdentifier, requestModel } from "../../../lib/model-api";
+import { containsSensitiveIdentifier, requestModelStream } from "../../../lib/model-api";
 
 type ChatMessage = { role: "user" | "assistant"; content: string };
 const chatModels = ["deepseek-v4-flash", "deepseek-v4-pro"] as const;
@@ -54,8 +54,25 @@ export async function POST(request: Request) {
       `最近对话：${JSON.stringify(history)}`,
       `医生问题：${message}`,
     ].join("\n\n");
-    const answer = cleanChatAnswer(await requestModel(baseUrl, apiKey, model, prompt, { maxOutputTokens: model === "deepseek-v4-flash" ? 220 : 320, timeoutMs: 60000 }));
-    return Response.json({ model, answer }, { headers: { "Cache-Control": "no-store" } });
+    const encoder = new TextEncoder();
+    const event = (name: string, payload: unknown) => encoder.encode(`event: ${name}\ndata: ${JSON.stringify(payload)}\n\n`);
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        let answer = "";
+        controller.enqueue(event("meta", { model }));
+        try {
+          for await (const delta of requestModelStream(baseUrl, apiKey, model, prompt, { maxOutputTokens: model === "deepseek-v4-flash" ? 220 : 320, timeoutMs: 60000 })) {
+            answer += delta;
+            controller.enqueue(event("delta", { answer: cleanChatAnswer(answer) }));
+          }
+          controller.enqueue(event("done", { model, answer: cleanChatAnswer(answer) }));
+        } catch (error) {
+          const message = error instanceof Error && error.name === "TimeoutError" ? "AI解释超时，请稍后重试。" : "AI暂时没有完成解释，请重试一次。";
+          controller.enqueue(event("error", { error: message }));
+        } finally { controller.close(); }
+      },
+    });
+    return new Response(stream, { headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-store, no-transform", "X-Accel-Buffering": "no" } });
   } catch (error) {
     const message = error instanceof Error && error.name === "TimeoutError"
       ? "AI解释超时，请稍后重试。"

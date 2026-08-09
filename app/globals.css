@@ -238,6 +238,8 @@ button { cursor: pointer; }
 .draft-section > div { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
 .draft-section label { color: var(--navy); font-size: 13px; font-weight: 900; }
 .draft-section > div small { color: var(--muted); font-size: 9px; text-align: right; }
+.draft-heading-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.draft-heading-actions button { padding: 6px 8px; border: 1px solid #cdd9e9; border-radius: 7px; color: #405f89; background: white; font-size: 8px; font-weight: 850; white-space: nowrap; }
 .draft-section textarea { width: 100%; min-height: 94px; margin-top: 11px; padding: 12px; resize: vertical; outline: 0; border: 1px solid #e0e9ed; border-radius: 9px; color: #203d4d; background: #fbfdfe; font-size: 12px; line-height: 1.85; }
 .draft-section.wide textarea { min-height: 170px; }
 .draft-section textarea:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(20,122,167,.08); }

@@ -123,7 +123,9 @@ async function templateChatWithMockModel(model = "deepseek-v4-pro") {
   let prompt = "";
   globalThis.fetch = async (_url, init) => {
     prompt = JSON.parse(init.body).input;
-    return new Response(JSON.stringify({ output_text: "**重点**：建议核对具体淋巴引流区、部位、大小、质地、活动度及压痛；*记录示例*只能使用已核实内容，这些记录不能替代诊断。" }), { status: 200 });
+    const chunks = ["**重点**：建议核对具体淋巴引流区、", "部位、大小、质地、活动度及压痛；", "*记录示例*只能使用已核实内容，这些记录不能替代诊断。"];
+    const sse = chunks.map((delta) => `event: response.output_text.delta\ndata: ${JSON.stringify({ type: "response.output_text.delta", delta })}\n\n`).join("") + "data: [DONE]\n\n";
+    return new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } });
   };
   try {
     const response = await worker.fetch(
@@ -162,6 +164,9 @@ test("renders the single-entry admission draft package workflow", async () => {
   assert.match(pageSource, /深入 · V4 Pro/);
   assert.match(pageSource, /正在思考.*秒/);
   assert.match(pageSource, /renderChatContent/);
+  assert.match(pageSource, /parseEventStream/);
+  assert.doesNotMatch(pageSource, /补充记录：/);
+  assert.match(pageSource, /插入医生确认大纲/);
   assert.doesNotMatch(html, /进入管床/);
   assert.doesNotMatch(html, /合成患者 A02/);
   assert.doesNotMatch(html, /codex-preview/);
@@ -199,6 +204,9 @@ test("extracts facts first and adds melanoma scaffolds plus guided choices", asy
   assert.ok(body.result.review_items.find((item) => item.choice_id === "melanoma_sampling").options.find((option) => option.option_id === "node").detail_prompt.includes("取材"));
   assert.equal(body.result.review_items.find((item) => item.choice_id === "melanoma_pathology_detail").options.find((option) => option.option_id === "none").detail_prompt, undefined);
   assert.match(body.result.specialist_exam, /ECOG PS/);
+  assert.match(body.result.specialist_exam, /cm×/);
+  assert.match(body.result.specialist_exam, /双侧颈部、腋窝及腹股沟/);
+  assert.match(body.result.specialist_exam, /粘连/);
   assert.doesNotMatch(body.result.specialist_exam, /右侧腋窝.*肿大/);
   assert.deepEqual(body.result.pending_fields, ["过敏史：待核对"]);
 });
@@ -222,11 +230,13 @@ test("template chat explains documentation fields without replacing clinical jud
   assert.match(prompt, /不能替患者回答有或无/);
   assert.match(prompt, /不能推荐检查、药物、剂量、治疗/);
   assert.match(prompt, /不超过180个汉字/);
-  const body = await response.json();
-  assert.equal(body.model, "deepseek-v4-pro");
-  assert.match(body.answer, /\*\*重点\*\*/);
-  assert.doesNotMatch(body.answer, /\*记录示例\*/);
-  assert.match(body.answer, /部位、大小、质地、活动度及压痛/);
+  assert.match(response.headers.get("content-type"), /text\/event-stream/);
+  const stream = await response.text();
+  assert.ok(stream.indexOf("event: delta") < stream.indexOf("event: done"));
+  assert.match(stream, /deepseek-v4-pro/);
+  assert.match(stream, /\*\*重点\*\*/);
+  assert.doesNotMatch(stream, /\*记录示例\*/);
+  assert.match(stream, /部位、大小、质地、活动度及压痛/);
 });
 
 test("template chat rejects models outside the documented selector", async () => {
