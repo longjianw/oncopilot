@@ -32,8 +32,8 @@ const sectionLabels: Array<{ field: DraftField; label: string; hint: string; pla
   { field: "family_history", label: "家族史", hint: "未提供时留空，不自动写否认", placeholder: "可在上方点选候选项，也可直接输入" },
   { field: "allergy_history", label: "过敏史", hint: "仅写已确认过敏或已确认无过敏", placeholder: "可在上方点选候选项，也可直接输入" },
   { field: "specialist_exam", label: "专科体格检查", hint: "只写医生实际查体/评分；影像异常不能代替触诊所见", placeholder: "按病种核对原发部位、术区、区域淋巴结、ECOG PS；存在疼痛时记录NRS", large: true },
-  { field: "diagnosis_summary", label: "初步诊断整理", hint: "当前入院使用；既往出院诊断只作病史依据", placeholder: "填写本次医生确认的初步/入院诊断；按“诊断列表｜诊断依据｜必要时鉴别诊断”整理" },
-  { field: "plan_summary", label: "计划整理", hint: "只整理医生已明确给出的计划，不新增治疗建议", placeholder: "填写医生已明确计划；可按“本次目标｜已决定检查｜已决定治疗/观察｜复评节点”整理", large: true },
+  { field: "diagnosis_summary", label: "初步诊断整理", hint: "AI先按现有资料给候选，医生核对后使用", placeholder: "按“初步诊断｜诊断依据｜必要时鉴别诊断”整理" },
+  { field: "plan_summary", label: "计划整理", hint: "AI先给有条件的检查与诊疗方向，可直接编辑", placeholder: "按“本次目标｜候选检查｜分层诊疗方向｜复评节点”整理", large: true },
 ];
 
 const chatModelOptions: Array<{ id: ChatModel; label: string; note: string }> = [
@@ -45,6 +45,22 @@ const doctorOutlines: Partial<Record<DraftField, string>> = {
   diagnosis_summary: "初步诊断：\n1. 【主要诊断待医生确认】（原发部位【】；病理类型【】；临床分期【】；分子状态【如已检测】）\n诊断依据：病理原文【】；专科查体【】；影像或其他证据【】。\n鉴别诊断：【仅在当前问题需要时填写，否则删除本行】。",
   plan_summary: "本次目标：【待医生确认】\n已决定补充或复核的资料：【】\n已决定的检查或评估：【】\n已决定的治疗或观察安排：【】\n复评节点及上级审核：【】",
 };
+
+const referenceDiagnosisDraft = (reference: ClinicalReferenceBundle) => [
+  "【AI参考候选，待医生核对】",
+  `初步诊断：${reference.preliminary_diagnosis}`,
+  `诊断依据：${reference.diagnostic_basis.join("；") || "待结合原始报告补充"}`,
+  `鉴别诊断：${reference.differential_diagnosis.join("；") || "结合当前主要问题判断是否需要"}`,
+].join("\n");
+
+const referencePlanDraft = (reference: ClinicalReferenceBundle) => [
+  "【AI参考候选，待医生核对】",
+  `尚缺前提：${reference.missing_prerequisites.join("；")}`,
+  "候选检查/评估：",
+  ...reference.suggested_workup.map((item, index) => `${index + 1}. ${item.title}（条件：${item.trigger}；目的：${item.purpose}）`),
+  "分层诊疗方向：",
+  ...reference.treatment_pathways.map((item, index) => `${index + 1}. ${item.title}（条件：${item.trigger}；目的：${item.purpose}）`),
+].join("\n");
 
 const renderInlineMarkdown = (text: string): ReactNode[] => text.split(/(\*\*[^*]+\*\*)/g).filter(Boolean).map((part, index) =>
   part.startsWith("**") && part.endsWith("**") ? <strong key={index}>{part.slice(2, -2)}</strong> : <span key={index}>{part}</span>);
@@ -302,16 +318,26 @@ export default function Home() {
 
   const generateClinicalReference = async (result: AnalysisResult) => {
     setReferenceLoading(true); setReferenceNotice("");
+    const applyAutomaticReference = (reference: ClinicalReferenceBundle) => setDraft((current) => {
+      if (!current) return current;
+      const replaceable = (text: string) => !text.trim() || text.startsWith("【AI参考候选，待医生核对】");
+      return {
+        ...current,
+        diagnosis_summary: replaceable(current.diagnosis_summary) ? referenceDiagnosisDraft(reference) : current.diagnosis_summary,
+        plan_summary: replaceable(current.plan_summary) ? referencePlanDraft(reference) : current.plan_summary,
+      };
+    });
     try {
       if (!clinicalReference) {
         const starterResponse = await fetch("/api/clinical-reference", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "starter", facts: result.facts, current_purpose: currentPurpose }) });
         const starterPayload = await starterResponse.json() as { result?: ClinicalReferenceBundle; error?: string };
-        if (starterResponse.ok && starterPayload.result) setClinicalReference(starterPayload.result);
+        if (starterResponse.ok && starterPayload.result) { setClinicalReference(starterPayload.result); applyAutomaticReference(starterPayload.result); }
       }
       const response = await fetch("/api/clinical-reference", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "generate", facts: result.facts, current_purpose: currentPurpose }) });
-      const payload = await response.json() as { result?: ClinicalReferenceBundle; error?: string };
+      const payload = await response.json() as { result?: ClinicalReferenceBundle; degraded?: boolean; warning?: string; error?: string };
       if (!response.ok || !payload.result) throw new Error(payload.error || "AI参考暂时没有生成出来。");
-      setClinicalReference(payload.result);
+      setClinicalReference(payload.result); applyAutomaticReference(payload.result);
+      if (payload.degraded) setReferenceNotice(payload.warning || "AI深化暂未返回，已保留快速候选。");
     } catch (caught) { setReferenceNotice(caught instanceof Error ? caught.message : "AI参考暂时没有生成出来。"); }
     finally { setReferenceLoading(false); }
   };
@@ -330,9 +356,7 @@ export default function Home() {
 
   const adoptReference = (field: "diagnosis_summary" | "plan_summary") => {
     if (!clinicalReference) return;
-    const content = field === "diagnosis_summary"
-      ? [`【AI参考候选，待医生核对】`, `初步诊断：${clinicalReference.preliminary_diagnosis}`, `诊断依据：${clinicalReference.diagnostic_basis.join("；") || "待结合原始报告补充"}`, `鉴别诊断：${clinicalReference.differential_diagnosis.join("；") || "待医生确认是否需要"}`].join("\n")
-      : [`【AI参考候选，待医生核对】`, `尚缺前提：${clinicalReference.missing_prerequisites.join("；")}`, `候选检查/评估：`, ...clinicalReference.suggested_workup.map((item, index) => `${index + 1}. ${item.title}（条件：${item.trigger}；目的：${item.purpose}）`), `分层诊疗方向：`, ...clinicalReference.treatment_pathways.map((item, index) => `${index + 1}. ${item.title}（条件：${item.trigger}；目的：${item.purpose}）`)].join("\n");
+    const content = field === "diagnosis_summary" ? referenceDiagnosisDraft(clinicalReference) : referencePlanDraft(clinicalReference);
     updateDraft(field, content);
     setReferenceNotice(field === "diagnosis_summary" ? "已填入初步诊断整理区，请医生逐项核对后删除候选标记；系统不会生成出院诊断。" : "已填入计划整理区，请医生按本院流程和患者实际情况核对。" );
   };
@@ -342,10 +366,11 @@ export default function Home() {
     setLoading(true); setAnalysisElapsed(0); setAnalysisNotice(""); setError("");
     try {
       const response = await fetch("/api/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source_text: sourceText, current_purpose: currentPurpose }) });
-      const payload = await readPayload(response) as { result?: AnalysisResult; processing_status?: "complete" | "draft_fallback"; fact_fallback_count?: number; error?: string };
+      const payload = await readPayload(response) as { result?: AnalysisResult; processing_status?: "complete" | "draft_fallback"; fact_fallback_count?: number; rule_fallback_count?: number; raw_fallback_count?: number; error?: string };
       if (!response.ok || !payload.result) throw new Error(payload.error || "AI整理失败，请稍后重试。");
       const notices = [
-        payload.fact_fallback_count ? `${payload.fact_fallback_count}段资料未通过结构化校验，原文仅保留在来源与待核对区，没有写入主诉或现病史。` : "",
+        payload.rule_fallback_count ? `${payload.rule_fallback_count}段AI结构化未完成，已按明确标题和临床关键词提取为可核对事实，仍会用于生成草稿。` : "",
+        payload.raw_fallback_count ? `${payload.raw_fallback_count}段未提取到可靠事实，仅保留在来源与待核对区。` : "",
         payload.processing_status === "draft_fallback" ? "连贯合成未完成，当前显示已结构化事实与可填写骨架；可继续核对编辑，无需重新上传资料。" : "",
       ].filter(Boolean);
       if (notices.length) setAnalysisNotice(notices.join(" "));

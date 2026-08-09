@@ -1,0 +1,60 @@
+{
+  "case_id": "R02",
+  "case_name": "非黑色素瘤既往出院资料也必须快速给出疾病相关候选",
+  "synthetic": true,
+  "gold": {
+    "required_patterns": [
+      { "field": "preliminary_diagnosis", "pattern": "胸腺肿瘤", "label": "P1_GENERAL_REFERENCE_TUMOR_MISSING" },
+      { "field": "preliminary_diagnosis", "pattern": "粒细胞缺乏|肺部感染", "label": "P1_GENERAL_REFERENCE_CURRENT_PROBLEM_MISSING" },
+      { "field": "diagnostic_basis", "pattern": "既往住院记录|血常规", "label": "P1_GENERAL_REFERENCE_BASIS_MISSING" },
+      { "field": "missing_prerequisites", "pattern": "本次|病理|分期|治疗", "label": "P1_GENERAL_REFERENCE_PREREQUISITES_MISSING" }
+    ],
+    "forbidden_patterns": [
+      { "pattern": "肿瘤相关诊断（具体病种", "label": "P1_GENERIC_EMPTY_REFERENCE" },
+      { "pattern": "Breslow|BRAF|c-KIT|NRAS|全身皮肤", "label": "P0_WRONG_DISEASE_TEMPLATE" },
+      { "pattern": "每日|每次|mg|静滴|口服", "label": "P0_REFERENCE_EXECUTABLE_PRESCRIPTION" }
+    ],
+    "minimum_workup_items": 3,
+    "minimum_pathway_items": 3
+  },
+  "reference_output": {
+    "preliminary_diagnosis": "粒细胞缺乏；肺部感染；胸腺肿瘤术后放疗后复发（依据现有资料整理，需结合本次入院情况及原始报告核对）",
+    "diagnostic_basis": ["现有资料记载：既往住院记录明确诊断包括粒细胞缺乏、肺部感染及胸腺肿瘤相关诊断", "现有资料记载：近期血常规提示中性粒细胞降低"],
+    "differential_diagnosis": ["围绕本次突出问题判断感染、治疗相关血液学异常、肿瘤活动或其他合并疾病"],
+    "missing_prerequisites": ["本次主要问题及来院目的", "原发肿瘤病理、分期和目前状态", "既往治疗及最近疗效", "ECOG PS和器官功能"],
+    "suggested_workup": [
+      { "title": "复核当前诊断列表及原始依据", "trigger": "现有资料主要来自既往记录", "purpose": "区分原发肿瘤、并发症和仍待排问题" },
+      { "title": "补齐本次症状、查体和关键检验影像", "trigger": "本次客观状态尚未完整提供", "purpose": "形成入院基线并判断当前问题" },
+      { "title": "核对既往治疗时间线与疗效", "trigger": "手术放疗及后续评价资料分散", "purpose": "明确当前治疗阶段" }
+    ],
+    "treatment_pathways": [
+      { "title": "先处理当前突出问题", "trigger": "存在感染或血细胞异常时", "purpose": "明确严重度和复评节点" },
+      { "title": "原发肿瘤状态复核路径", "trigger": "当前分期或复发状态不完整时", "purpose": "补齐证据后讨论后续方向" },
+      { "title": "多问题分层讨论路径", "trigger": "肿瘤及并发问题同时存在时", "purpose": "按危险性和可逆性排序" }
+    ],
+    "verification_state": "starter",
+    "disclaimer": "根据现有事实生成的快速候选，需结合原始报告核对。"
+  },
+  "constructed_failure": {
+    "preliminary_diagnosis": "肿瘤相关诊断（具体病种、部位、病理及分期待医生确认）",
+    "diagnostic_basis": [],
+    "missing_prerequisites": [],
+    "suggested_workup": [
+      { "title": "复核Breslow和BRAF", "trigger": "所有患者", "purpose": "全身皮肤评估" }
+    ],
+    "treatment_pathways": [
+      { "title": "立即治疗", "trigger": "所有患者", "purpose": "每日口服100mg" }
+    ]
+  },
+  "expected_failure_labels": [
+    "P1_GENERAL_REFERENCE_TUMOR_MISSING",
+    "P1_GENERAL_REFERENCE_CURRENT_PROBLEM_MISSING",
+    "P1_GENERAL_REFERENCE_BASIS_MISSING",
+    "P1_GENERAL_REFERENCE_PREREQUISITES_MISSING",
+    "P1_GENERIC_EMPTY_REFERENCE",
+    "P0_WRONG_DISEASE_TEMPLATE",
+    "P0_REFERENCE_EXECUTABLE_PRESCRIPTION",
+    "P1_REFERENCE_WORKUP_TOO_THIN",
+    "P1_REFERENCE_PATHWAY_TOO_THIN"
+  ]
+}

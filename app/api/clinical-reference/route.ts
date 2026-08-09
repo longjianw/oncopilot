@@ -71,8 +71,17 @@ export async function POST(request: Request) {
       `本次来院目的：${currentPurpose || "未提供"}`,
       `结构化事实：${JSON.stringify(facts)}`,
     ].join("\n\n");
-    const result = parseClinicalReference(await requestModel(baseUrl, apiKey, "deepseek-v4-flash", prompt, { maxOutputTokens: 1800, timeoutMs: 75000 }), factsText, diagnosticFacts);
-    return Response.json({ result }, { headers: { "Cache-Control": "no-store" } });
+    try {
+      const result = parseClinicalReference(await requestModel(baseUrl, apiKey, "deepseek-v4-flash", prompt, { maxOutputTokens: 1800, timeoutMs: 25000 }), factsText, diagnosticFacts);
+      return Response.json({ result, degraded: false }, { headers: { "Cache-Control": "no-store" } });
+    } catch {
+      const starter = starterClinicalReference(factsText, diagnosticFacts);
+      return Response.json({
+        result: { ...starter, disclaimer: "AI深化本次未在25秒内返回，已保留根据现有事实生成的快速候选；可直接核对使用，也可稍后重新深化。" },
+        degraded: true,
+        warning: "AI深化暂未返回，已保留快速候选。",
+      }, { headers: { "Cache-Control": "no-store" } });
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : "诊疗参考暂时生成失败。";
     return Response.json({ error: message.includes("上游") ? "诊疗参考模型暂时不可用，请稍后重试。" : message }, { status: 502, headers: { "Cache-Control": "no-store" } });

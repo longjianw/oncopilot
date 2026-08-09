@@ -160,6 +160,28 @@ async function analyzePriorDischargeDiagnosisWithMockModel() {
   } finally { globalThis.fetch = originalFetch; }
 }
 
+async function analyzeWithRuleFallback() {
+  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
+  workerUrl.searchParams.set("rule-fallback-test", `${process.pid}-${Date.now()}`);
+  const { default: worker } = await import(workerUrl.href);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => {
+    const prompt = JSON.parse(init.body).input;
+    if (prompt.includes("结构化事实抽取器")) return new Response(JSON.stringify({ output_text: "{}" }), { status: 200 });
+    return new Response("upstream unavailable", { status: 504 });
+  };
+  try {
+    return await worker.fetch(
+      new Request("http://localhost/api/analyze", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({
+        source_text: "【完全合成既往出院记录】\n出院诊断：粒细胞缺乏；肺部感染；胸腺肿瘤术后放疗后复发。\n既往行胸腺肿瘤切除及术后放疗。\n近期血常规提示中性粒细胞降低。",
+        current_purpose: "进一步评估及处理当前问题",
+      }) }),
+      { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) }, ARK_CODING_API_KEY: "synthetic-test-key" },
+      { waitUntil() {}, passThroughOnException() {} },
+    );
+  } finally { globalThis.fetch = originalFetch; }
+}
+
 async function analyzeLongSourceWithMockModel(draftFails = false, extractionFails = false) {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("long-analyze-test", `${process.pid}-${Date.now()}`);
@@ -306,6 +328,25 @@ async function clinicalReferenceWithMockModel(action = "generate") {
   } finally { globalThis.fetch = originalFetch; }
 }
 
+async function clinicalReferenceFallbackWithPriorDiagnosis() {
+  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
+  workerUrl.searchParams.set("reference-fallback-test", `${process.pid}-${Date.now()}`);
+  const { default: worker } = await import(workerUrl.href);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ output_text: "" }), { status: 200 });
+  const facts = [
+    { fact_id: "F1", field: "prior_record_diagnosis", value: "既往住院记录明确诊断：粒细胞缺乏；肺部感染；胸腺肿瘤术后放疗后复发", event_time: "既往", event_type: "onset_diagnosis", encounter_scope: "prior", certainty: "explicit", source_ids: ["S1"] },
+    { fact_id: "F2", field: "current_status", value: "近期血常规提示中性粒细胞降低", event_time: "近期", event_type: "current_status", encounter_scope: "current", certainty: "explicit", source_ids: ["S1"] },
+  ];
+  try {
+    return await worker.fetch(
+      new Request("http://localhost/api/clinical-reference", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "generate", facts, current_purpose: "进一步评估及处理当前问题" }) }),
+      { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) }, ARK_CODING_API_KEY: "synthetic-test-key" },
+      { waitUntil() {}, passThroughOnException() {} },
+    );
+  } finally { globalThis.fetch = originalFetch; }
+}
+
 test("renders the single-entry admission draft package workflow", async () => {
   const response = await render();
   assert.equal(response.status, 200);
@@ -340,8 +381,10 @@ test("renders the single-entry admission draft package workflow", async () => {
   assert.match(pageSource, /用CSCO来源卡核验/);
   assert.match(pageSource, /联网核验权威网页/);
   assert.match(pageSource, /填入初步诊断整理/);
-  assert.match(pageSource, /既往出院诊断只作病史依据/);
+  assert.match(pageSource, /AI先按现有资料给候选/);
   assert.match(pageSource, /系统不会生成出院诊断/);
+  assert.match(pageSource, /applyAutomaticReference/);
+  assert.match(pageSource, /AI深化暂未返回，已保留快速候选/);
   assert.match(pageSource, /把候选路径填入计划整理/);
   assert.match(pageSource, /正在用图像模型提取入院关键资料/);
   assert.match(pageSource, /重试本页/);
@@ -351,7 +394,7 @@ test("renders the single-entry admission draft package workflow", async () => {
   assert.match(pageSource, /const results: Array<string \| null>/);
   assert.match(pageSource, /setSourceText\(baseText/);
   assert.match(pageSource, /正在分段核对事实并生成草稿/);
-  assert.match(pageSource, /原文仅保留在来源与待核对区/);
+  assert.match(pageSource, /未提取到可靠事实，仅保留在来源与待核对区/);
   assert.match(pageSource, /连贯合成未完成/);
   assert.doesNotMatch(html, /进入管床/);
   assert.doesNotMatch(html, /合成患者 A02/);
@@ -430,6 +473,21 @@ test("keeps prior discharge diagnoses out of the current admission diagnosis sec
   assert.doesNotMatch(body.result.present_illness, /出院诊断/);
   assert.match(prompts[0], /当前固定为入院记录路由/);
   assert.match(prompts[1], /不得输出‘出院诊断’/);
+});
+
+test("extracts useful rule-bound facts when long-text model extraction fails", async () => {
+  const response = await analyzeWithRuleFallback();
+  assert.equal(response.status, 200, await response.clone().text());
+  const body = await response.json();
+  assert.equal(body.rule_fallback_count, 1);
+  assert.equal(body.raw_fallback_count, 0);
+  assert.equal(body.processing_status, "draft_fallback");
+  assert.ok(body.result.facts.some((fact) => fact.field === "prior_record_diagnosis" && fact.encounter_scope === "prior"));
+  assert.ok(body.result.facts.some((fact) => fact.event_type === "prior_treatment"));
+  assert.match(body.result.chief_complaint, /胸腺肿瘤/);
+  assert.doesNotMatch(body.result.chief_complaint, /疾病或主要症状待补/);
+  assert.match(body.result.present_illness, /粒细胞缺乏|胸腺肿瘤|中性粒细胞/);
+  assert.doesNotMatch(body.result.present_illness, /AI连贯合成未完成|已核验事实顺序稿/);
 });
 
 test("segments long multi-page source text before fact extraction and merges the facts", async () => {
@@ -537,6 +595,20 @@ test("returns the source-card starter before waiting for model enrichment", asyn
   assert.match(body.result.preliminary_diagnosis, /原发部位.*待补/);
   assert.ok(body.result.suggested_workup.length >= 4);
   assert.ok(body.result.treatment_pathways.length >= 3);
+});
+
+test("returns a specific fast reference instead of an error when model enrichment is empty", async () => {
+  const response = await clinicalReferenceFallbackWithPriorDiagnosis();
+  assert.equal(response.status, 200, await response.clone().text());
+  const body = await response.json();
+  assert.equal(body.degraded, true);
+  assert.match(body.warning, /已保留快速候选/);
+  assert.match(body.result.preliminary_diagnosis, /粒细胞缺乏/);
+  assert.match(body.result.preliminary_diagnosis, /肺部感染/);
+  assert.match(body.result.preliminary_diagnosis, /胸腺肿瘤/);
+  assert.ok(body.result.suggested_workup.length >= 3);
+  assert.ok(body.result.treatment_pathways.length >= 3);
+  assert.doesNotMatch(JSON.stringify(body.result), /Breslow|BRAF|c-KIT|NRAS/);
 });
 
 test("cross-checks the generated reference against the local CSCO source card", async () => {

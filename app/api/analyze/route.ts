@@ -191,25 +191,88 @@ const rawChunkExtraction = (chunk: string, chunkIndex: number): FactExtraction =
   };
 };
 
+const heuristicClinicalPattern = /诊断|病理|免疫组化|分子|基因|手术|切除|放疗|化疗|靶向|免疫治疗|治疗|复发|进展|转移|感染|发热|疼痛|咳嗽|气促|恶心|呕吐|腹泻|CT|MRI|PET|超声|血常规|白细胞|中性粒细胞|血红蛋白|血小板|既往史|过敏史|家族史|个人史|查体|PS评分|ECOG|NRS|入院|来院/iu;
+
+const heuristicEventType = (text: string): ExtractedFact["event_type"] => {
+  if (/病理|免疫组化|分子|基因|BRAF|c-KIT|NRAS/i.test(text)) return "pathology_molecular";
+  if (/出院(?:时)?诊断|入院诊断|初步诊断|明确诊断|确诊/.test(text)) return "onset_diagnosis";
+  if (/手术|切除|放疗|化疗|靶向|免疫治疗|治疗\d*周期|治疗后/.test(text)) return "prior_treatment";
+  if (/复发|进展|转移|较前增大|新发病灶|考虑|可能|倾向|疑似|待排|不除外/.test(text)) return "progression_evidence";
+  if (/本次(?:入院|来院)|此次(?:入院|来院)|来院目的|入院目的/.test(text)) return "current_purpose";
+  if (/既往史|高血压|糖尿病|冠心病|传染病/.test(text)) return "past_history";
+  if (/个人史|吸烟|饮酒|婚育/.test(text)) return "personal_history";
+  if (/家族史|家族中/.test(text)) return "family_history";
+  if (/过敏史|药物过敏|食物过敏/.test(text)) return "allergy_history";
+  if (/查体|触及|皮损|瘢痕|PS评分|ECOG|NRS/.test(text)) return "specialist_exam";
+  if (/感染|发热|疼痛|咳嗽|气促|恶心|呕吐|腹泻|血常规|白细胞|中性粒细胞|血红蛋白|血小板|CT|MRI|PET|超声|检查/.test(text)) return "current_status";
+  return "other";
+};
+
+const heuristicChunkExtraction = (chunk: string, chunkIndex: number): FactExtraction | null => {
+  const sourceId = "RULE";
+  const sentences = [...new Set(chunk
+    .replace(/```[a-z]*|```/gi, " ")
+    .split(/\n+|(?<=[。！？])/)
+    .map((item) => item
+      .replace(/(?:患者姓名|姓名|住院号|病案号|门诊号|身份证号|联系电话|电话|详细地址|地址)\s*[:：]\s*[^，,；;\s]+/g, (matched) => `${matched.split(/[:：]/)[0]}：【已隐藏】`)
+      .replace(/^\s*(?:[-*•]|\d+[.、])\s*/, "")
+      .replace(/\s+/g, " ")
+      .trim())
+    .filter((item) => item.length >= 4 && heuristicClinicalPattern.test(item))
+    .map((item) => item.slice(0, 500)))]
+    .slice(0, 12);
+  if (!sentences.length) return null;
+  const facts: ExtractedFact[] = sentences.map((value, index) => {
+    const eventType = heuristicEventType(value);
+    const isPriorRecordDiagnosis = /出院(?:记录|小结|诊断)|出院时诊断/.test(`${chunk.slice(0, 160)}\n${value}`) && eventType === "onset_diagnosis";
+    const relativeTime = value.match(/(?:\d{4}[-年.]\d{1,2}[-月.]\d{1,2}日?|\d+(?:小时|天|周|月|年)前|近\d+(?:天|周|月|年)|既往|目前|本次)/)?.[0] || "未提供";
+    const currentClue = /本次|此次|目前|现(?:有|为|因)|入院后|近期/.test(value);
+    const priorClue = /既往|曾|外院|术后|治疗后|出院/.test(value) || eventType === "prior_treatment" || isPriorRecordDiagnosis;
+    return {
+      fact_id: `RULE-F${index + 1}`,
+      field: isPriorRecordDiagnosis ? "prior_record_diagnosis" : eventType,
+      value: isPriorRecordDiagnosis ? priorDiagnosisValue(value) : value,
+      event_time: relativeTime,
+      event_type: eventType,
+      encounter_scope: priorClue ? "prior" : currentClue ? "current" : "unclear",
+      certainty: /考虑|可能|倾向|疑似|待排|不除外/.test(value) ? "uncertain" : "explicit",
+      source_ids: [sourceId],
+    };
+  });
+  return {
+    current_purpose: facts.find((fact) => fact.event_type === "current_purpose")?.value || null,
+    sources: [{ source_id: sourceId, title: `第${chunkIndex + 1}段资料（规则提取待核对）`, evidence: "AI结构化未完成；已按资料中的明确标题和临床关键词提取可编辑事实。" }],
+    facts,
+    pending_fields: [`第${chunkIndex + 1}段采用规则提取，请结合原文核对`],
+  };
+};
+
 const extractFacts = async (baseUrl: string, apiKey: string, model: string, sourceText: string, currentPurpose: string) => {
   const chunks = splitSourceText(sourceText);
   const parts: FactExtraction[] = [];
   let fallbackCount = 0;
+  let ruleFallbackCount = 0;
+  let rawFallbackCount = 0;
   const results = await Promise.all(chunks.map(async (chunk, chunkIndex) => {
       let extracted: unknown;
       try {
         extracted = await requestJson(baseUrl, apiKey, model, buildExtractionPrompt(chunk, chunkIndex === 0 ? currentPurpose : ""), 2600);
         if (!isValidFactExtraction(extracted)) throw new Error("结构不完整");
-        return { part: withPrefix(extracted, chunkIndex), usedFallback: false };
+        return { part: withPrefix(extracted, chunkIndex), fallbackMode: "none" as const };
       } catch {
-        return { part: withPrefix(rawChunkExtraction(chunk, chunkIndex), chunkIndex), usedFallback: true };
+        const heuristic = heuristicChunkExtraction(chunk, chunkIndex);
+        return heuristic
+          ? { part: withPrefix(heuristic, chunkIndex), fallbackMode: "rule" as const }
+          : { part: withPrefix(rawChunkExtraction(chunk, chunkIndex), chunkIndex), fallbackMode: "raw" as const };
       }
   }));
   parts.push(...results.map((result) => result.part));
-  fallbackCount += results.filter((result) => result.usedFallback).length;
+  fallbackCount += results.filter((result) => result.fallbackMode !== "none").length;
+  ruleFallbackCount += results.filter((result) => result.fallbackMode === "rule").length;
+  rawFallbackCount += results.filter((result) => result.fallbackMode === "raw").length;
   const merged = normalizeAdmissionFacts(mergeExtractions(parts, currentPurpose));
   if (!isValidFactExtraction(merged)) throw new Error("合并后的事实结构不完整");
-  return { extraction: merged, chunkCount: chunks.length, fallbackCount };
+  return { extraction: merged, chunkCount: chunks.length, fallbackCount, ruleFallbackCount, rawFallbackCount };
 };
 
 const currentDoctorDiagnoses = (extraction: FactExtraction) => extraction.facts.filter((fact) => fact.event_type === "doctor_diagnosis"
@@ -225,11 +288,20 @@ const sanitizeAdmissionDiagnosisSummary = (value: string) => value
   .replace(/[\s；;，,]+$/, "")
   .trim();
 
+const tumorDiagnosisFromPriorRecord = (value: string) => value
+  .replace(/^既往住院记录明确诊断\s*[:：]?/, "")
+  .split(/[；;，,\n]/)
+  .map((item) => item.replace(/^\s*\d+[.、]\s*/, "").trim())
+  .find((item) => /癌|瘤|白血病|淋巴瘤/.test(item))
+  ?.slice(0, 60) || "";
+
 const fallbackDraftFromFacts = (extraction: FactExtraction): AdmissionDraft => {
   const usableFacts = extraction.facts.filter((fact) => fact.certainty !== "pending" && fact.field !== "unparsed_source_segment");
   const values = (eventType: string) => usableFacts.filter((fact) => fact.event_type === eventType).map((fact) => fact.value);
   const join = (items: string[]) => [...new Set(items.map((item) => item.trim()).filter(Boolean))].join("；");
-  const diagnosis = usableFacts.find((fact) => fact.event_type === "onset_diagnosis" && fact.field !== "prior_record_diagnosis")?.value.trim() || "";
+  const diagnosis = usableFacts.find((fact) => fact.event_type === "onset_diagnosis" && fact.field !== "prior_record_diagnosis")?.value.trim()
+    || usableFacts.filter((fact) => fact.field === "prior_record_diagnosis").map((fact) => tumorDiagnosisFromPriorRecord(fact.value)).find(Boolean)
+    || "";
   const purpose = extraction.current_purpose || values("current_purpose")[0] || "";
   const diagnosisHasDuration = /(?:\d+|[一二三四五六七八九十数半两]+)\s*(?:小时|天|周|月|年)/.test(diagnosis);
   const chiefComplaint = `${diagnosis || "【疾病或主要症状待补】"}${diagnosisHasDuration ? "" : "【病程时间待补】"}，${purpose || "【本次来院目的待补】"}`;
@@ -305,7 +377,7 @@ export async function POST(request: Request) {
     const model = process.env.ARK_CODING_MODEL || "deepseek-v4-flash";
     const baseUrl = (process.env.ARK_CODING_BASE_URL || "https://ark.cn-beijing.volces.com/api/coding/v3").replace(/\/$/, "");
 
-    const { extraction, chunkCount, fallbackCount } = await extractFacts(baseUrl, apiKey, model, sourceText, currentPurpose);
+    const { extraction, chunkCount, fallbackCount, ruleFallbackCount, rawFallbackCount } = await extractFacts(baseUrl, apiKey, model, sourceText, currentPurpose);
     let rawDraft: AdmissionDraft;
     let processingStatus: "complete" | "draft_fallback" = "complete";
     try {
@@ -328,7 +400,7 @@ export async function POST(request: Request) {
       template_mode: guided.template_mode,
       template_name: guided.template_name,
     };
-    return Response.json({ model, processing_mode: chunkCount > 1 ? "chunked" : "single", processing_status: processingStatus, chunk_count: chunkCount, fact_fallback_count: fallbackCount, result }, { headers: { "Cache-Control": "no-store" } });
+    return Response.json({ model, processing_mode: chunkCount > 1 ? "chunked" : "single", processing_status: processingStatus, chunk_count: chunkCount, fact_fallback_count: fallbackCount, rule_fallback_count: ruleFallbackCount, raw_fallback_count: rawFallbackCount, result }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     const detail = error instanceof Error ? error.message : "";
     const message = error instanceof Error && error.name === "TimeoutError"
