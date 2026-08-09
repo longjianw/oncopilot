@@ -32,7 +32,7 @@ const sectionLabels: Array<{ field: DraftField; label: string; hint: string; pla
   { field: "family_history", label: "家族史", hint: "未提供时留空，不自动写否认", placeholder: "可在上方点选候选项，也可直接输入" },
   { field: "allergy_history", label: "过敏史", hint: "仅写已确认过敏或已确认无过敏", placeholder: "可在上方点选候选项，也可直接输入" },
   { field: "specialist_exam", label: "专科体格检查", hint: "只写医生实际查体/评分；影像异常不能代替触诊所见", placeholder: "按病种核对原发部位、术区、区域淋巴结、ECOG PS；存在疼痛时记录NRS", large: true },
-  { field: "diagnosis_summary", label: "诊断整理", hint: "只整理医生已明确给出的判断，不由 AI 诊断", placeholder: "填写医生已明确判断；可按“主要诊断｜病理/分期依据｜并存疾病待确认”整理" },
+  { field: "diagnosis_summary", label: "初步诊断整理", hint: "当前入院使用；既往出院诊断只作病史依据", placeholder: "填写本次医生确认的初步/入院诊断；按“诊断列表｜诊断依据｜必要时鉴别诊断”整理" },
   { field: "plan_summary", label: "计划整理", hint: "只整理医生已明确给出的计划，不新增治疗建议", placeholder: "填写医生已明确计划；可按“本次目标｜已决定检查｜已决定治疗/观察｜复评节点”整理", large: true },
 ];
 
@@ -42,7 +42,7 @@ const chatModelOptions: Array<{ id: ChatModel; label: string; note: string }> = 
 ];
 
 const doctorOutlines: Partial<Record<DraftField, string>> = {
-  diagnosis_summary: "1. 【主要诊断待医生确认】（原发部位【】；病理类型【】；临床分期【】；分子状态【如已检测】）\n诊断依据：病理原文【】；专科查体【】；影像或其他证据【】。\n鉴别诊断：【是否需要及具体内容待医生确认】。",
+  diagnosis_summary: "初步诊断：\n1. 【主要诊断待医生确认】（原发部位【】；病理类型【】；临床分期【】；分子状态【如已检测】）\n诊断依据：病理原文【】；专科查体【】；影像或其他证据【】。\n鉴别诊断：【仅在当前问题需要时填写，否则删除本行】。",
   plan_summary: "本次目标：【待医生确认】\n已决定补充或复核的资料：【】\n已决定的检查或评估：【】\n已决定的治疗或观察安排：【】\n复评节点及上级审核：【】",
 };
 
@@ -334,7 +334,7 @@ export default function Home() {
       ? [`【AI参考候选，待医生核对】`, `初步诊断：${clinicalReference.preliminary_diagnosis}`, `诊断依据：${clinicalReference.diagnostic_basis.join("；") || "待结合原始报告补充"}`, `鉴别诊断：${clinicalReference.differential_diagnosis.join("；") || "待医生确认是否需要"}`].join("\n")
       : [`【AI参考候选，待医生核对】`, `尚缺前提：${clinicalReference.missing_prerequisites.join("；")}`, `候选检查/评估：`, ...clinicalReference.suggested_workup.map((item, index) => `${index + 1}. ${item.title}（条件：${item.trigger}；目的：${item.purpose}）`), `分层诊疗方向：`, ...clinicalReference.treatment_pathways.map((item, index) => `${index + 1}. ${item.title}（条件：${item.trigger}；目的：${item.purpose}）`)].join("\n");
     updateDraft(field, content);
-    setReferenceNotice(field === "diagnosis_summary" ? "已填入诊断整理区，请医生逐项核对后删除候选标记。" : "已填入计划整理区，请医生按本院流程和患者实际情况核对。" );
+    setReferenceNotice(field === "diagnosis_summary" ? "已填入初步诊断整理区，请医生逐项核对后删除候选标记；系统不会生成出院诊断。" : "已填入计划整理区，请医生按本院流程和患者实际情况核对。" );
   };
 
   const analyze = async () => {
@@ -472,7 +472,7 @@ export default function Home() {
         {referenceLoading && <div className="reference-loading"><i className="spinner" /> 正在根据结构化事实生成初步诊断、候选检查和分层诊疗路径……</div>}
         {clinicalReference && <div className="reference-content">
           <div className="reference-state"><strong>{clinicalReference.verification_state === "starter" ? "内置来源卡 · 快速初稿" : clinicalReference.verification_state === "model_only" ? "AI深化初稿 · 未交叉核验" : clinicalReference.verification_state === "local_checked" ? "已用本地来源卡核验" : "已联网读取权威网页核验"}</strong><span>{clinicalReference.disclaimer}</span></div>
-          <div className="reference-grid"><article><h3>初步诊断与依据</h3><p><b>初步诊断：</b>{clinicalReference.preliminary_diagnosis}</p><p><b>诊断依据：</b>{clinicalReference.diagnostic_basis.join("；") || "待补"}</p><p><b>鉴别诊断：</b>{clinicalReference.differential_diagnosis.join("；") || "待医生确认"}</p><button type="button" onClick={() => adoptReference("diagnosis_summary")}>填入诊断整理</button></article><article><h3>尚缺关键前提</h3><ul>{clinicalReference.missing_prerequisites.map((item) => <li key={item}>{item}</li>)}</ul></article></div>
+          <div className="reference-grid"><article><h3>初步诊断与依据</h3><p><b>初步诊断：</b>{clinicalReference.preliminary_diagnosis}</p><p><b>诊断依据：</b>{clinicalReference.diagnostic_basis.join("；") || "待补"}</p><p><b>鉴别诊断：</b>{clinicalReference.differential_diagnosis.join("；") || "待医生确认"}</p><button type="button" onClick={() => adoptReference("diagnosis_summary")}>填入初步诊断整理</button></article><article><h3>尚缺关键前提</h3><ul>{clinicalReference.missing_prerequisites.map((item) => <li key={item}>{item}</li>)}</ul></article></div>
           <div className="reference-paths"><article><h3>候选检查与评估</h3>{clinicalReference.suggested_workup.map((item) => <div key={`${item.title}-${item.trigger}`}><strong>{item.title}</strong><span>何时考虑：{item.trigger}</span><small>目的：{item.purpose}</small></div>)}</article><article><h3>分层诊疗方向</h3>{clinicalReference.treatment_pathways.map((item) => <div key={`${item.title}-${item.trigger}`}><strong>{item.title}</strong><span>适用前提：{item.trigger}</span><small>讨论目的：{item.purpose}</small></div>)}</article></div>
           <button type="button" className="adopt-plan" onClick={() => adoptReference("plan_summary")}>把候选路径填入计划整理</button>
           {clinicalReference.checks && <div className="reference-checks"><h3>交叉核验结果</h3>{clinicalReference.checks.map((check) => <div key={`${check.topic}-${check.source}`} className={check.status}><b>{check.status === "supported" ? "来源支持" : check.status === "conditional" ? "有条件支持" : "本次未找到"}</b><span><strong>{check.topic}</strong><small>{check.note}</small><em>{check.url ? <a href={check.url} target="_blank" rel="noreferrer">{check.source}</a> : check.source}</em></span></div>)}</div>}

@@ -124,6 +124,42 @@ async function analyzeWithMockModel() {
   }
 }
 
+async function analyzePriorDischargeDiagnosisWithMockModel() {
+  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
+  workerUrl.searchParams.set("prior-discharge-diagnosis-test", `${process.pid}-${Date.now()}`);
+  const { default: worker } = await import(workerUrl.href);
+  const responses = [
+    {
+      current_purpose: "进一步评估",
+      sources: [{ source_id: "S1", title: "完全合成既往出院记录", evidence: "入院诊断与出院诊断均记载粒细胞缺乏、肺部感染及胸腺肿瘤相关诊断" }],
+      facts: [{ fact_id: "F1", field: "doctor_diagnosis", value: "入院诊断：粒细胞缺乏、肺部感染；出院诊断：粒细胞缺乏、肺部感染、胸腺肿瘤术后放疗后复发", event_time: "本次", event_type: "doctor_diagnosis", encounter_scope: "current", certainty: "doctor_confirmed", source_ids: ["S1"] }],
+      pending_fields: [],
+    },
+    {
+      chief_complaint: "胸腺肿瘤诊疗后入院进一步评估",
+      present_illness: "既往住院记录明确诊断为粒细胞缺乏、肺部感染及胸腺肿瘤术后放疗后复发，本次为进一步评估入院。",
+      past_history: "", personal_history: "", family_history: "", allergy_history: "", specialist_exam: "",
+      diagnosis_summary: "入院诊断：1.粒细胞缺乏；2.肺部感染。出院诊断：1.粒细胞缺乏；2.肺部感染。",
+      plan_summary: "", pending_fields: [],
+    },
+  ];
+  const originalFetch = globalThis.fetch;
+  const prompts = [];
+  let calls = 0;
+  globalThis.fetch = async (_url, init) => {
+    prompts.push(JSON.parse(init.body).input);
+    return new Response(JSON.stringify({ output_text: JSON.stringify(responses[calls++]) }), { status: 200 });
+  };
+  try {
+    const response = await worker.fetch(
+      new Request("http://localhost/api/analyze", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ source_text: "【完全合成既往出院记录】入院诊断与出院诊断均包含粒细胞缺乏、肺部感染及胸腺肿瘤相关诊断。", current_purpose: "进一步评估" }) }),
+      { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) }, ARK_CODING_API_KEY: "synthetic-test-key" },
+      { waitUntil() {}, passThroughOnException() {} },
+    );
+    return { response, prompts };
+  } finally { globalThis.fetch = originalFetch; }
+}
+
 async function analyzeLongSourceWithMockModel(draftFails = false, extractionFails = false) {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("long-analyze-test", `${process.pid}-${Date.now()}`);
@@ -303,7 +339,9 @@ test("renders the single-entry admission draft package workflow", async () => {
   assert.match(pageSource, /诊断与下一步 · AI参考候选/);
   assert.match(pageSource, /用CSCO来源卡核验/);
   assert.match(pageSource, /联网核验权威网页/);
-  assert.match(pageSource, /填入诊断整理/);
+  assert.match(pageSource, /填入初步诊断整理/);
+  assert.match(pageSource, /既往出院诊断只作病史依据/);
+  assert.match(pageSource, /系统不会生成出院诊断/);
   assert.match(pageSource, /把候选路径填入计划整理/);
   assert.match(pageSource, /正在用图像模型提取入院关键资料/);
   assert.match(pageSource, /重试本页/);
@@ -375,6 +413,23 @@ test("extracts facts first and adds melanoma scaffolds plus guided choices", asy
   assert.match(body.result.specialist_exam, /粘连/);
   assert.doesNotMatch(body.result.specialist_exam, /右侧腋窝.*肿大/);
   assert.deepEqual(body.result.pending_fields, ["过敏史：待核对"]);
+});
+
+test("keeps prior discharge diagnoses out of the current admission diagnosis section", async () => {
+  const { response, prompts } = await analyzePriorDischargeDiagnosisWithMockModel();
+  assert.equal(response.status, 200, await response.clone().text());
+  const body = await response.json();
+  const priorDiagnosis = body.result.facts.find((fact) => fact.fact_id === "C1-F1");
+  assert.equal(priorDiagnosis.field, "prior_record_diagnosis");
+  assert.equal(priorDiagnosis.event_type, "onset_diagnosis");
+  assert.equal(priorDiagnosis.encounter_scope, "prior");
+  assert.equal(priorDiagnosis.certainty, "explicit");
+  assert.match(priorDiagnosis.value, /既往住院记录明确诊断/);
+  assert.doesNotMatch(priorDiagnosis.value, /出院诊断/);
+  assert.equal(body.result.diagnosis_summary, "");
+  assert.doesNotMatch(body.result.present_illness, /出院诊断/);
+  assert.match(prompts[0], /当前固定为入院记录路由/);
+  assert.match(prompts[1], /不得输出‘出院诊断’/);
 });
 
 test("segments long multi-page source text before fact extraction and merges the facts", async () => {

@@ -130,9 +130,10 @@ export const isValidAdmissionDraft = (value: unknown): value is AdmissionDraft =
 };
 
 export const hasUnsupportedDoctorJudgment = (extraction: FactExtraction, draft: AdmissionDraft) => {
-  const diagnoses = extraction.facts.filter((fact) => fact.event_type === "doctor_diagnosis" && fact.certainty === "doctor_confirmed");
-  const plans = extraction.facts.filter((fact) => fact.event_type === "doctor_plan" && fact.certainty === "doctor_confirmed");
+  const diagnoses = extraction.facts.filter((fact) => fact.event_type === "doctor_diagnosis" && fact.certainty === "doctor_confirmed" && fact.encounter_scope === "current");
+  const plans = extraction.facts.filter((fact) => fact.event_type === "doctor_plan" && fact.certainty === "doctor_confirmed" && fact.encounter_scope === "current");
   return (draft.diagnosis_summary.trim().length > 0 && diagnoses.length === 0)
+    || /出院(?:时)?诊断\s*[:：]?/.test(draft.diagnosis_summary)
     || (draft.plan_summary.trim().length > 0 && plans.length === 0);
 };
 

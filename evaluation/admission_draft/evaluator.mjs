@@ -25,6 +25,14 @@ export function evaluateAdmissionCase(testCase, candidate) {
     if (!matched) errors.push(`P1_KEY_FACT_MISSING:${expected.field}`);
   }
 
+  for (const rule of testCase.gold.forbidden_fact_classifications || []) {
+    const matched = facts.some((fact) => (!rule.value_contains || normalize(fact.value).includes(normalize(rule.value_contains)))
+      && (!rule.event_type || fact.event_type === rule.event_type)
+      && (!rule.encounter_scope || fact.encounter_scope === rule.encounter_scope)
+      && (!rule.certainty || fact.certainty === rule.certainty));
+    if (matched) errors.push(rule.label);
+  }
+
   for (const rule of testCase.gold.forbidden_draft_patterns || []) {
     const sectionText = rule.section === "*" ? combinedDraft : String(candidate.draft?.[rule.section] || "");
     if (includesAny(sectionText, rule.patterns)) errors.push(rule.label);

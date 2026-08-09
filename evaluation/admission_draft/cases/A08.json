@@ -1,0 +1,65 @@
+{
+  "case_id": "A08",
+  "case_name": "既往出院诊断不得冒充当前入院诊断或写入出院诊断",
+  "synthetic": true,
+  "source_text": "【完全合成既往出院记录】入院诊断：粒细胞缺乏、肺部感染、胸腺肿瘤术后放疗后复发。出院诊断：粒细胞缺乏、肺部感染、胸腺肿瘤术后放疗后复发。",
+  "current_purpose": "进一步评估",
+  "gold": {
+    "required_facts": [
+      { "field": "prior_record_diagnosis", "value_contains": "粒细胞缺乏", "encounter_scope": "prior", "certainty": "explicit", "source_ids": ["S1"] }
+    ],
+    "forbidden_fact_classifications": [
+      { "value_contains": "出院诊断", "event_type": "doctor_diagnosis", "encounter_scope": "current", "label": "P0_PRIOR_DISCHARGE_DIAGNOSIS_AS_CURRENT" }
+    ],
+    "forbidden_draft_patterns": [
+      { "section": "diagnosis_summary", "patterns": ["出院诊断", "既往出院诊断"], "label": "P0_DISCHARGE_DIAGNOSIS_IN_ADMISSION_DRAFT" }
+    ],
+    "must_be_empty_sections": ["diagnosis_summary"],
+    "required_draft_text": [
+      { "section": "present_illness", "any": ["既往住院记录明确诊断"] }
+    ]
+  },
+  "reference_output": {
+    "sources": [
+      { "source_id": "S1", "title": "完全合成既往出院记录", "evidence": "既往住院诊断包括粒细胞缺乏、肺部感染及胸腺肿瘤相关诊断" }
+    ],
+    "facts": [
+      { "fact_id": "F1", "field": "prior_record_diagnosis", "value": "既往住院记录明确诊断：粒细胞缺乏；肺部感染；胸腺肿瘤术后放疗后复发", "event_time": "既往", "event_type": "onset_diagnosis", "encounter_scope": "prior", "certainty": "explicit", "source_ids": ["S1"] }
+    ],
+    "draft": {
+      "chief_complaint": "胸腺肿瘤诊疗后【病程时间待补】，进一步评估",
+      "present_illness": "既往住院记录明确诊断为粒细胞缺乏、肺部感染及胸腺肿瘤术后放疗后复发。本次为进一步评估入院。",
+      "past_history": "",
+      "personal_history": "",
+      "family_history": "",
+      "allergy_history": "",
+      "specialist_exam": "",
+      "diagnosis_summary": "",
+      "plan_summary": ""
+    }
+  },
+  "constructed_failure": {
+    "sources": [
+      { "source_id": "S1", "title": "完全合成既往出院记录", "evidence": "入院诊断与出院诊断列表" }
+    ],
+    "facts": [
+      { "fact_id": "F1", "field": "doctor_diagnosis", "value": "入院诊断：粒细胞缺乏、肺部感染；出院诊断：粒细胞缺乏、肺部感染", "event_time": "本次", "event_type": "doctor_diagnosis", "encounter_scope": "current", "certainty": "doctor_confirmed", "source_ids": ["S1"] }
+    ],
+    "draft": {
+      "chief_complaint": "胸腺肿瘤诊疗后入院",
+      "present_illness": "患者既往接受胸腺肿瘤相关治疗，本次进一步评估。",
+      "past_history": "",
+      "personal_history": "",
+      "family_history": "",
+      "allergy_history": "",
+      "specialist_exam": "",
+      "diagnosis_summary": "入院诊断：1.粒细胞缺乏；2.肺部感染。出院诊断：1.粒细胞缺乏；2.肺部感染。",
+      "plan_summary": ""
+    }
+  },
+  "expected_failure_labels": [
+    "P0_PRIOR_DISCHARGE_DIAGNOSIS_AS_CURRENT",
+    "P0_DISCHARGE_DIAGNOSIS_IN_ADMISSION_DRAFT",
+    "UNSUPPORTED_SECTION_CONTENT:diagnosis_summary"
+  ]
+}

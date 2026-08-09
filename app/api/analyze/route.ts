@@ -80,6 +80,7 @@ const draftShape: AdmissionDraft = {
 const buildExtractionPrompt = (sourceText: string, currentPurpose: string) => [
   "你是医疗AI作品中的结构化事实抽取器。只抽取，不写病历，不诊断，不提出治疗建议。",
   "使用场景是肿瘤科医生第一次接管该患者，不代表患者首次住院。既往外院诊断、手术、放疗、系统治疗、出院和未来计划都必须与本次就诊分开。",
+  "当前固定为入院记录路由。来源若是出院记录、出院小结或带有‘出院诊断’标题，其中诊断属于既往住院事实：标为onset_diagnosis、encounter_scope=prior、certainty=explicit，不得标为本次doctor_diagnosis。只有本次医生明确写出的初步诊断、入院诊断或当前诊断，才能作为current的doctor_diagnosis。",
   "每条事实必须绑定至少一个来源。保留原文的考虑、可能、倾向、疑似、待排等不确定性，不得升级为确定事实。未询问和未提供不等于阴性。未查体不等于正常。",
   "只有输入明确标注为医生判断、初步诊断、诊疗计划或医生已确认的内容，才能标为doctor_diagnosis/doctor_plan，certainty必须为doctor_confirmed。其他推断不得归入这两类。",
   "本次来院目的作为单独字段，判断本次就诊时优先于原始资料最后出现的住院、出院或未来日期。如果提供了单独目的，为它建立S-PURPOSE来源和current范围事实。",
@@ -135,6 +136,41 @@ const mergeExtractions = (parts: FactExtraction[], currentPurpose: string): Fact
   };
 };
 
+const priorDischargeDocumentPattern = /出院(?:记录|小结|诊断)|出院时诊断/;
+
+const priorDiagnosisValue = (value: string) => {
+  const dischargeIndex = value.search(/出院(?:时)?诊断\s*[:：]?/);
+  const selected = dischargeIndex >= 0 ? value.slice(dischargeIndex) : value;
+  const cleaned = selected
+    .replace(/^.*?出院(?:时)?诊断\s*[:：]?\s*/, "")
+    .replace(/^.*?入院诊断\s*[:：]?\s*/, "")
+    .split(/(?:出院医嘱|诊疗经过|出院情况)\s*[:：]?/)[0]
+    .replace(/[\s；;，,]+$/, "")
+    .trim();
+  return `既往住院记录明确诊断：${cleaned || "具体诊断内容待核对"}`.slice(0, 800);
+};
+
+const normalizeAdmissionFacts = (extraction: FactExtraction): FactExtraction => {
+  const sourceTextById = new Map(extraction.sources.map((source) => [source.source_id, `${source.title}\n${source.evidence}`]));
+  return {
+    ...extraction,
+    facts: extraction.facts.map((fact): ExtractedFact => {
+      if (fact.event_type !== "doctor_diagnosis") return fact;
+      const sourceText = fact.source_ids.map((id) => sourceTextById.get(id) || "").join("\n");
+      const isPriorDischargeDiagnosis = priorDischargeDocumentPattern.test(`${fact.field}\n${fact.value}\n${sourceText}`);
+      if (!isPriorDischargeDiagnosis) return fact;
+      return {
+        ...fact,
+        field: "prior_record_diagnosis",
+        value: priorDiagnosisValue(fact.value),
+        event_type: "onset_diagnosis",
+        encounter_scope: "prior",
+        certainty: fact.certainty === "pending" ? "pending" : "explicit",
+      };
+    }),
+  };
+};
+
 const rawChunkExtraction = (chunk: string, chunkIndex: number): FactExtraction => {
   const rawSourceId = "RAW";
   const pieces = Array.from({ length: Math.ceil(chunk.length / 700) }, (_, index) => chunk.slice(index * 700, (index + 1) * 700)).filter((piece) => piece.trim());
@@ -171,16 +207,29 @@ const extractFacts = async (baseUrl: string, apiKey: string, model: string, sour
   }));
   parts.push(...results.map((result) => result.part));
   fallbackCount += results.filter((result) => result.usedFallback).length;
-  const merged = mergeExtractions(parts, currentPurpose);
+  const merged = normalizeAdmissionFacts(mergeExtractions(parts, currentPurpose));
   if (!isValidFactExtraction(merged)) throw new Error("合并后的事实结构不完整");
   return { extraction: merged, chunkCount: chunks.length, fallbackCount };
 };
+
+const currentDoctorDiagnoses = (extraction: FactExtraction) => extraction.facts.filter((fact) => fact.event_type === "doctor_diagnosis"
+  && fact.certainty === "doctor_confirmed"
+  && fact.encounter_scope === "current");
+
+const currentDoctorPlans = (extraction: FactExtraction) => extraction.facts.filter((fact) => fact.event_type === "doctor_plan"
+  && fact.certainty === "doctor_confirmed"
+  && fact.encounter_scope === "current");
+
+const sanitizeAdmissionDiagnosisSummary = (value: string) => value
+  .split(/出院(?:时)?诊断\s*[:：]?/)[0]
+  .replace(/[\s；;，,]+$/, "")
+  .trim();
 
 const fallbackDraftFromFacts = (extraction: FactExtraction): AdmissionDraft => {
   const usableFacts = extraction.facts.filter((fact) => fact.certainty !== "pending" && fact.field !== "unparsed_source_segment");
   const values = (eventType: string) => usableFacts.filter((fact) => fact.event_type === eventType).map((fact) => fact.value);
   const join = (items: string[]) => [...new Set(items.map((item) => item.trim()).filter(Boolean))].join("；");
-  const diagnosis = usableFacts.find((fact) => fact.event_type === "onset_diagnosis")?.value.trim() || "";
+  const diagnosis = usableFacts.find((fact) => fact.event_type === "onset_diagnosis" && fact.field !== "prior_record_diagnosis")?.value.trim() || "";
   const purpose = extraction.current_purpose || values("current_purpose")[0] || "";
   const diagnosisHasDuration = /(?:\d+|[一二三四五六七八九十数半两]+)\s*(?:小时|天|周|月|年)/.test(diagnosis);
   const chiefComplaint = `${diagnosis || "【疾病或主要症状待补】"}${diagnosisHasDuration ? "" : "【病程时间待补】"}，${purpose || "【本次来院目的待补】"}`;
@@ -203,8 +252,8 @@ const fallbackDraftFromFacts = (extraction: FactExtraction): AdmissionDraft => {
     family_history: join(values("family_history")),
     allergy_history: join(values("allergy_history")),
     specialist_exam: join(values("specialist_exam")),
-    diagnosis_summary: join(extraction.facts.filter((fact) => fact.event_type === "doctor_diagnosis" && fact.certainty === "doctor_confirmed").map((fact) => fact.value)),
-    plan_summary: join(extraction.facts.filter((fact) => fact.event_type === "doctor_plan" && fact.certainty === "doctor_confirmed").map((fact) => fact.value)),
+    diagnosis_summary: join(currentDoctorDiagnoses(extraction).map((fact) => fact.value)),
+    plan_summary: join(currentDoctorPlans(extraction).map((fact) => fact.value)),
     pending_fields: extraction.pending_fields,
   };
 };
@@ -216,7 +265,7 @@ const buildDraftPrompt = (extraction: FactExtraction) => [
   "现病史按首发/确诊→病理或关键分子结果→既往治疗及疗效→复发或进展证据→本次入院原因及当前情况重建。current_purpose决定本次，不能把既往住院、出院或未来计划写成本次经过。",
   "certainty为uncertain的事实必须保留不确定词。不得把考虑/可能/倾向/疑似/待排写成确定分期、转移或疗效。",
   "既往史、个人史、家族史、过敏史、专科查体没有对应事实时输出空字符串，不得写否认、无特殊、正常或未见异常。",
-  "diagnosis_summary和plan_summary只允许整理doctor_confirmed的doctor_diagnosis或doctor_plan事实；没有时输出空字符串。不得自行新增诊断、检查、处方、剂量、治疗或处置建议。",
+  "当前固定生成入院记录，不生成出院记录。diagnosis_summary只允许整理encounter_scope=current且doctor_confirmed的doctor_diagnosis，按初步诊断/入院诊断、诊断依据、必要时鉴别诊断组织；既往出院记录中的入院诊断或出院诊断只能作为既往诊疗事实，不得写入当前诊断区，更不得输出‘出院诊断’。plan_summary同样只允许整理current且doctor_confirmed的doctor_plan；没有时输出空字符串。不得自行新增诊断、检查、处方、剂量、治疗或处置建议。",
   "只输出一个JSON对象，不要Markdown或解释。必须严格符合以下结构：",
   JSON.stringify(draftShape),
   `唯一可用事实：\n${JSON.stringify(extraction)}`,
@@ -232,8 +281,8 @@ const forceEvidenceBoundSections = (extraction: FactExtraction, draft: Admission
     family_history: hasType("family_history") ? draft.family_history : "",
     allergy_history: hasType("allergy_history") ? draft.allergy_history : "",
     specialist_exam: hasType("specialist_exam") ? draft.specialist_exam : "",
-    diagnosis_summary: extraction.facts.some((fact) => fact.event_type === "doctor_diagnosis" && fact.certainty === "doctor_confirmed") ? draft.diagnosis_summary : "",
-    plan_summary: extraction.facts.some((fact) => fact.event_type === "doctor_plan" && fact.certainty === "doctor_confirmed") ? draft.plan_summary : "",
+    diagnosis_summary: currentDoctorDiagnoses(extraction).length ? sanitizeAdmissionDiagnosisSummary(draft.diagnosis_summary) : "",
+    plan_summary: currentDoctorPlans(extraction).length ? draft.plan_summary : "",
     pending_fields: pending,
   };
 };
