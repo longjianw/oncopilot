@@ -2,6 +2,20 @@ import { parseModelJson } from "./model-api";
 
 export type ReferencePathItem = { title: string; trigger: string; purpose: string };
 export type ReferenceCheck = { topic: string; status: "supported" | "conditional" | "not_found"; note: string; source: string; url?: string };
+export type DiagnosisReferenceStage = {
+  preliminary_diagnosis: string;
+  diagnostic_basis: string[];
+  differential_diagnosis: string[];
+  missing_prerequisites: string[];
+};
+export type PlanReferenceStage = {
+  current_priority: string;
+  plan_reasoning: string[];
+  suggested_workup: ReferencePathItem[];
+  treatment_pathways: ReferencePathItem[];
+  decision_changers: string[];
+  next_question: string;
+};
 export type ClinicalReferenceBundle = {
   preliminary_diagnosis: string;
   diagnostic_basis: string[];
@@ -9,6 +23,10 @@ export type ClinicalReferenceBundle = {
   missing_prerequisites: string[];
   suggested_workup: ReferencePathItem[];
   treatment_pathways: ReferencePathItem[];
+  current_priority?: string;
+  plan_reasoning?: string[];
+  decision_changers?: string[];
+  next_question?: string;
   verification_state: "model_only" | "local_checked" | "web_checked";
   disclaimer: string;
   checks?: ReferenceCheck[];
@@ -43,13 +61,92 @@ const normalizeStage = (value: string) => value.toUpperCase().replace(/\s+/g, ""
 
 const unsupportedDiagnosticCertainty = (diagnosticText: string, evidenceText: string) => {
   const explicitEvidence = explicitEvidenceText(evidenceText);
-  const unsupportedTerms = ["转移", "化疗"];
+  const unsupportedTerms = ["转移", "化疗", "皮肤", "黏膜", "眼部", "眼内", "肢端"];
   if (unsupportedTerms.some((term) => diagnosticText.includes(term) && !explicitEvidence.includes(term))) return true;
   const unsupportedTemporalTerms = ["未恢复", "持续性", "进行性", "反复", "逐渐加重", "较前恶化"];
   if (unsupportedTemporalTerms.some((term) => diagnosticText.includes(term) && !explicitEvidence.includes(term))) return true;
   const stages = diagnosticText.match(/(?:IV|III|II|I|Ⅳ|Ⅲ|Ⅱ|Ⅰ|[1-4])\s*期/gi) || [];
   return stages.some((stage) => !normalizeStage(explicitEvidence).includes(normalizeStage(stage)));
 };
+
+const conflatesIhcWithMolecularTesting = (candidateText: string, evidenceText: string) => {
+  if (/(?:BRAF|NRAS|c-?KIT|\bKIT\b)/i.test(evidenceText)) return false;
+  return [
+    /免疫组化(?:的)?(?:具体)?结果[^。；\n]{0,36}(?:BRAF|NRAS|c-?KIT|\bKIT\b)/i,
+    /免疫组化中[^。；\n]{0,36}(?:BRAF|NRAS|c-?KIT|\bKIT\b)/i,
+    /(?:获取|补充|调取)[^。；\n]{0,20}免疫组化[^。；\n]{0,48}(?:BRAF|NRAS|c-?KIT|\bKIT\b)/i,
+  ].some((pattern) => pattern.test(candidateText));
+};
+
+export function parseDiagnosisReferenceStage(raw: string, evidenceText = ""): DiagnosisReferenceStage {
+  const value = parseModelJson(raw) as Partial<DiagnosisReferenceStage>;
+  const preliminaryDiagnosis = typeof value.preliminary_diagnosis === "string" ? value.preliminary_diagnosis.trim() : "";
+  const diagnosticBasis = strings(value.diagnostic_basis, 5);
+  const differentialDiagnosis = strings(value.differential_diagnosis, 4);
+  const missingPrerequisites = strings(value.missing_prerequisites, 6);
+  if (!preliminaryDiagnosis || diagnosticBasis.length < 1 || missingPrerequisites.length < 1) {
+    throw new Error("模型没有完成诊断阶段");
+  }
+  if (evidenceText && unsupportedDiagnosticCertainty([preliminaryDiagnosis, ...diagnosticBasis].join(" "), evidenceText.replace(/\s+/g, ""))) {
+    throw new Error("模型在诊断区加入了资料未支持的分期、转移或治疗类型");
+  }
+  const allText = [preliminaryDiagnosis, ...diagnosticBasis, ...differentialDiagnosis, ...missingPrerequisites].join(" ");
+  if (evidenceText && conflatesIhcWithMolecularTesting(allText, evidenceText)) {
+    throw new Error("模型把免疫组化结果与BRAF、NRAS或KIT分子检测混为一谈");
+  }
+  return {
+    preliminary_diagnosis: preliminaryDiagnosis,
+    diagnostic_basis: diagnosticBasis,
+    differential_diagnosis: differentialDiagnosis,
+    missing_prerequisites: missingPrerequisites,
+  };
+}
+
+export function parsePlanReferenceStage(raw: string, evidenceText = ""): PlanReferenceStage {
+  const value = parseModelJson(raw) as Partial<PlanReferenceStage>;
+  const currentPriority = typeof value.current_priority === "string" ? value.current_priority.trim() : "";
+  const planReasoning = strings(value.plan_reasoning, 5);
+  const suggestedWorkup = pathItems(value.suggested_workup, 5);
+  const treatmentPathways = pathItems(value.treatment_pathways, 4);
+  const decisionChangers = strings(value.decision_changers, 5);
+  const nextQuestion = typeof value.next_question === "string" ? value.next_question.trim() : "";
+  if (!currentPriority || planReasoning.length < 1 || suggestedWorkup.length < 1 || treatmentPathways.length < 1 || decisionChangers.length < 1 || !nextQuestion) {
+    throw new Error("模型没有完成计划阶段");
+  }
+  const allText = [
+    currentPriority,
+    ...planReasoning,
+    ...suggestedWorkup.flatMap((item) => [item.title, item.trigger, item.purpose]),
+    ...treatmentPathways.flatMap((item) => [item.title, item.trigger, item.purpose]),
+    ...decisionChangers,
+    nextQuestion,
+  ].join(" ");
+  if (evidenceText && conflatesIhcWithMolecularTesting(allText, evidenceText)) {
+    throw new Error("模型把免疫组化结果与BRAF、NRAS或KIT分子检测混为一谈");
+  }
+  return {
+    current_priority: currentPriority,
+    plan_reasoning: planReasoning,
+    suggested_workup: suggestedWorkup,
+    treatment_pathways: treatmentPathways,
+    decision_changers: decisionChangers,
+    next_question: nextQuestion,
+  };
+}
+
+export function combineClinicalReferenceStages(diagnosis: DiagnosisReferenceStage, plan: PlanReferenceStage): ClinicalReferenceBundle {
+  return {
+    ...diagnosis,
+    suggested_workup: plan.suggested_workup,
+    treatment_pathways: plan.treatment_pathways,
+    current_priority: plan.current_priority,
+    plan_reasoning: plan.plan_reasoning,
+    decision_changers: plan.decision_changers,
+    next_question: plan.next_question,
+    verification_state: "model_only",
+    disclaimer: "AI分阶段参考初稿，尚未进行指南或本院资料核验；不得直接作为医嘱、处方或最终诊疗决定。",
+  };
+}
 
 export function parseClinicalReference(raw: string, evidenceText = ""): ClinicalReferenceBundle {
   const value = parseModelJson(raw) as Partial<ClinicalReferenceBundle>;

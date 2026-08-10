@@ -102,7 +102,7 @@ export const isValidFactExtraction = (value: unknown): value is FactExtraction =
     && fact.source_ids.every((id) => sourceIds.includes(id)))) return false;
   if (!hasUniqueIds(result.facts.map((fact) => fact.fact_id))) return false;
   return Array.isArray(result.pending_fields)
-    && result.pending_fields.length <= 6
+    && result.pending_fields.length <= 8
     && result.pending_fields.every((item) => isShortString(item, 100));
 };
 
@@ -125,7 +125,7 @@ export const isValidAdmissionDraft = (value: unknown): value is AdmissionDraft =
   if (!result.chief_complaint?.trim() || result.chief_complaint.length > 100) return false;
   if (!result.present_illness || result.present_illness.trim().length < 20) return false;
   return Array.isArray(result.pending_fields)
-    && result.pending_fields.length <= 6
+    && result.pending_fields.length <= 8
     && result.pending_fields.every((item) => isShortString(item, 100));
 };
 

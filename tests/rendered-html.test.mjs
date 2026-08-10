@@ -107,6 +107,7 @@ async function analyzeWithMockModel() {
       diagnosis_summary: "模型自行诊断",
       plan_summary: "模型自行制定计划",
       pending_fields: [],
+      present_illness_fact_ids: ["C1-F1", "C1-F2", "C1-F3", "C1-F4"],
     },
   ];
   const originalFetch = globalThis.fetch;
@@ -143,7 +144,7 @@ async function analyzePriorDischargeDiagnosisWithMockModel() {
       present_illness: "既往住院记录明确诊断为粒细胞缺乏、肺部感染及胸腺肿瘤术后放疗后复发，本次为进一步评估入院。",
       past_history: "", personal_history: "", family_history: "", allergy_history: "", specialist_exam: "",
       diagnosis_summary: "入院诊断：1.粒细胞缺乏；2.肺部感染。出院诊断：1.粒细胞缺乏；2.肺部感染。",
-      plan_summary: "", pending_fields: [],
+      plan_summary: "", pending_fields: [], present_illness_fact_ids: ["C1-F1", "F-PURPOSE"],
     },
   ];
   const originalFetch = globalThis.fetch;
@@ -180,7 +181,7 @@ async function analyzeWithContaminatedModelDraft() {
     {
       chief_complaint: "### 入院诊断【病程时间待补】，**本次入院目的**：进一步评估",
       present_illness: "### 入院诊断；**确诊经过**：纵隔肿瘤。**住院治疗**：既往治疗后出院。**治疗计划**：进一步处理。",
-      past_history: "", personal_history: "", family_history: "", allergy_history: "", specialist_exam: "", diagnosis_summary: "", plan_summary: "", pending_fields: [],
+      past_history: "", personal_history: "", family_history: "", allergy_history: "", specialist_exam: "", diagnosis_summary: "", plan_summary: "", pending_fields: [], present_illness_fact_ids: ["C1-F1", "C1-F2", "F-PURPOSE"],
     },
   ];
   const originalFetch = globalThis.fetch;
@@ -236,7 +237,7 @@ async function analyzeLongSourceWithMockModel(draftFails = false, extractionFail
   const draft = {
     chief_complaint: "发现肿瘤相关异常，持续时间待核对",
     present_illness: "患者1月前发现肿瘤相关异常，已完成部分检查，本次为进一步评估入院。",
-    past_history: "", personal_history: "", family_history: "", allergy_history: "", specialist_exam: "", diagnosis_summary: "", plan_summary: "", pending_fields: [],
+    past_history: "", personal_history: "", family_history: "", allergy_history: "", specialist_exam: "", diagnosis_summary: "", plan_summary: "", pending_fields: [], present_illness_fact_ids: ["F-PURPOSE"],
   };
   const originalFetch = globalThis.fetch;
   let extractionCalls = 0;
@@ -610,6 +611,7 @@ async function analyzeExternalTransferWithMockModel(referralOnlyEnding) {
     diagnosis_summary: "",
     plan_summary: "",
     pending_fields: [],
+    present_illness_fact_ids: ["C1-F-REFERRAL", "F-PURPOSE", "F-ARRIVAL"],
   };
   const originalFetch = globalThis.fetch;
   const prompts = [];
@@ -651,7 +653,7 @@ async function analyzeSourceConfirmedTransferWithoutSelector() {
   const draft = {
     chief_complaint: "治疗后发热1天",
     present_illness: "患者治疗后出现发热，随后转入我院收治。因外院处理后病情无明显好转，建议转上级医院进一步诊治。",
-    past_history: "", personal_history: "", family_history: "", allergy_history: "", specialist_exam: "", diagnosis_summary: "", plan_summary: "", pending_fields: [],
+    past_history: "", personal_history: "", family_history: "", allergy_history: "", specialist_exam: "", diagnosis_summary: "", plan_summary: "", pending_fields: [], present_illness_fact_ids: ["C1-F1", "C1-F2", "F-PURPOSE"],
   };
   const originalFetch = globalThis.fetch;
   let calls = 0;
@@ -690,7 +692,7 @@ async function analyzeMixedExternalAndCurrentExam() {
     present_illness: "患者今日出现发热，由外院转入我院进一步评估。",
     past_history: "", personal_history: "", family_history: "", allergy_history: "",
     specialist_exam: "神志清楚，右肺呼吸音低。",
-    diagnosis_summary: "", plan_summary: "", pending_fields: [],
+    diagnosis_summary: "", plan_summary: "", pending_fields: [], present_illness_fact_ids: ["F-PURPOSE", "F-ARRIVAL"],
   };
   const originalFetch = globalThis.fetch;
   let calls = 0;
@@ -725,12 +727,12 @@ async function analyzeRetriesUnsupportedChiefDurationAndMissingAdmissionClosure(
   const invalidDraft = {
     chief_complaint: "高热伴血细胞减少6天",
     present_illness: "患者2026年8月6日出现高热伴血细胞减少，外院处理后建议转院，后转入我院。",
-    past_history: "", personal_history: "", family_history: "", allergy_history: "", specialist_exam: "", diagnosis_summary: "", plan_summary: "", pending_fields: [],
+    past_history: "", personal_history: "", family_history: "", allergy_history: "", specialist_exam: "", diagnosis_summary: "", plan_summary: "", pending_fields: [], present_illness_fact_ids: ["C1-F1", "C1-F2", "F-PURPOSE", "F-ARRIVAL"],
   };
   const correctedDraft = {
     chief_complaint: "高热伴血细胞减少，持续时间待核对",
     present_illness: "患者2026年8月6日出现高热伴血细胞减少，外院处理后建议转院，后转入我院并收治入院。",
-    past_history: "", personal_history: "", family_history: "", allergy_history: "", specialist_exam: "", diagnosis_summary: "", plan_summary: "", pending_fields: [],
+    past_history: "", personal_history: "", family_history: "", allergy_history: "", specialist_exam: "", diagnosis_summary: "", plan_summary: "", pending_fields: [], present_illness_fact_ids: ["C1-F1", "C1-F2", "F-PURPOSE", "F-ARRIVAL"],
   };
   const originalFetch = globalThis.fetch;
   const outputs = [extraction, invalidDraft, correctedDraft];
@@ -789,6 +791,100 @@ async function clinicalReferenceWithMockModel(action = "generate") {
       { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) }, ARK_CODING_API_KEY: "synthetic-test-key" },
       { waitUntil() {}, passThroughOnException() {} },
     );
+  } finally { globalThis.fetch = originalFetch; }
+}
+
+async function clinicalReferenceStageWithMockModel(stage) {
+  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
+  workerUrl.searchParams.set("reference-stage-test", `${process.pid}-${Date.now()}-${stage}`);
+  const { default: worker } = await import(workerUrl.href);
+  const diagnosis = {
+    preliminary_diagnosis: "黑色素瘤（病理提示，分期待补）",
+    diagnostic_basis: ["既往病理资料提示黑色素瘤"],
+    differential_diagnosis: ["病理原文不完整时需考虑病理复核"],
+    missing_prerequisites: ["原发部位会影响分期表达", "完整病理参数会影响风险分层"],
+  };
+  const plan = {
+    current_priority: "先补齐完整病理与分期前提",
+    plan_reasoning: ["当前只能确认病理类型", "治疗路径取决于分期与可切除性"],
+    suggested_workup: [{ title: "复核完整病理", trigger: "原始报告未提供", purpose: "补齐关键病理参数" }],
+    treatment_pathways: [{ title: "按分期进入后续路径讨论", trigger: "完整分期由医生确认后", purpose: "确定后续局部或系统治疗讨论方向" }],
+    decision_changers: ["原发部位", "完整病理报告", "分期影像"],
+    next_question: "请先补充完整病理报告的关键参数。",
+  };
+  const originalFetch = globalThis.fetch;
+  let upstreamBody;
+  globalThis.fetch = async (_url, init) => {
+    upstreamBody = JSON.parse(init.body);
+    return new Response(JSON.stringify({ output_text: JSON.stringify(stage === "diagnosis" ? diagnosis : plan) }), { status: 200 });
+  };
+  const facts = [{ fact_id: "F1", field: "diagnosis", value: "确诊黑色素瘤3天", event_time: "3天前", event_type: "onset_diagnosis", encounter_scope: "prior", certainty: "explicit", source_ids: ["S1"] }];
+  try {
+    const response = await worker.fetch(
+      new Request("http://localhost/api/clinical-reference", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({
+        action: "generate",
+        stage,
+        facts,
+        current_purpose: "进一步评估",
+        narrative: { chief_complaint: "确诊黑色素瘤3天", present_illness: "既往病理提示黑色素瘤。" },
+        diagnosis,
+      }) }),
+      { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) }, ARK_CODING_API_KEY: "synthetic-test-key" },
+      { waitUntil() {}, passThroughOnException() {} },
+    );
+    return { response, upstreamBody };
+  } finally { globalThis.fetch = originalFetch; }
+}
+
+async function clinicalReferenceStageRetriesMelanomaDetailError(stage) {
+  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
+  workerUrl.searchParams.set("reference-stage-retry-test", `${process.pid}-${Date.now()}-${stage}`);
+  const { default: worker } = await import(workerUrl.href);
+  const diagnosis = {
+    preliminary_diagnosis: "黑色素瘤（原发部位与分期待补）",
+    diagnostic_basis: ["既往病理资料提示黑色素瘤"],
+    differential_diagnosis: [],
+    missing_prerequisites: ["原发部位", "完整病理参数", "分期评估"],
+  };
+  const invalidDiagnosis = { ...diagnosis, preliminary_diagnosis: "皮肤黑色素瘤（分期待补）" };
+  const validPlan = {
+    current_priority: "区分病理免疫组化与后续分子检测缺口",
+    plan_reasoning: ["当前只确认做过免疫组化但未取得结果", "BRAF等分子状态需按临床情境另行核对"],
+    suggested_workup: [{ title: "调取完整病理与免疫组化报告", trigger: "原报告未提供", purpose: "核对病理诊断依据" }],
+    treatment_pathways: [{ title: "按完整分期讨论后续路径", trigger: "诊断与分期由医生确认后", purpose: "确定后续讨论方向" }],
+    decision_changers: ["免疫组化原报告", "原发部位", "完整分期"],
+    next_question: "请先提供完整病理与免疫组化报告。",
+  };
+  const invalidPlan = {
+    ...validPlan,
+    suggested_workup: [{ title: "获取免疫组化具体结果（包括BRAF、NRAS、KIT）", trigger: "结果未提供", purpose: "判断靶向治疗条件" }],
+  };
+  const outputs = stage === "diagnosis" ? [invalidDiagnosis, diagnosis] : [invalidPlan, validPlan];
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  const prompts = [];
+  globalThis.fetch = async (_url, init) => {
+    prompts.push(JSON.parse(init.body).input);
+    return new Response(JSON.stringify({ output_text: JSON.stringify(outputs[Math.min(calls++, outputs.length - 1)]) }), { status: 200 });
+  };
+  const facts = [
+    { fact_id: "F1", field: "diagnosis", value: "确诊黑色素瘤3天", event_time: "3天前", event_type: "onset_diagnosis", encounter_scope: "prior", certainty: "explicit", source_ids: ["S1"] },
+    { fact_id: "F2", field: "pathology", value: "免疫组化已完成，具体结果未提供", event_time: "3天前", event_type: "pathology_molecular", encounter_scope: "prior", certainty: "explicit", source_ids: ["S1"] },
+  ];
+  try {
+    const response = await worker.fetch(
+      new Request("http://localhost/api/clinical-reference", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({
+        action: "generate",
+        stage,
+        facts,
+        current_purpose: "进一步评估",
+        narrative: { chief_complaint: "确诊黑色素瘤3天", present_illness: "免疫组化已完成，具体结果未提供。" },
+        diagnosis,
+      }) }),
+      { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) }, ARK_CODING_API_KEY: "synthetic-test-key" },
+      { waitUntil() {}, passThroughOnException() {} },
+    );
+    return { response, calls, prompts };
   } finally { globalThis.fetch = originalFetch; }
 }
 
@@ -870,16 +966,19 @@ test("renders the single-entry admission draft package workflow", async () => {
   assert.match(pageSource, /parseEventStream/);
   assert.doesNotMatch(pageSource, /补充记录：/);
   assert.match(pageSource, /插入医生确认大纲/);
-  assert.match(pageSource, /诊断与下一步 · AI参考候选/);
+  assert.match(pageSource, /诊断与下一步 · 分阶段生成/);
+  assert.match(pageSource, /临床事件账本/);
+  assert.match(pageSource, /资料时间轴/);
   assert.match(pageSource, /核验已接入来源卡/);
   assert.match(pageSource, /联网核验权威网页/);
   assert.match(pageSource, /填入初步诊断整理/);
   assert.match(pageSource, /AI先按现有资料给候选/);
   assert.match(pageSource, /系统不会生成出院诊断/);
-  assert.match(pageSource, /applyAutomaticReference/);
-  assert.match(pageSource, /不再先显示通用内置答案/);
+  assert.match(pageSource, /stage: "diagnosis"/);
+  assert.match(pageSource, /stage: "plan"/);
+  assert.match(pageSource, /一道一道生成/);
   assert.doesNotMatch(pageSource, /action: "starter"/);
-  assert.match(pageSource, /V4 Pro生成中/);
+  assert.match(pageSource, /分阶段生成中/);
   assert.match(pageSource, /把候选路径填入计划整理/);
   assert.match(pageSource, /继续问本病例/);
   assert.match(pageSource, /clinical-reference-chat/);
@@ -895,7 +994,7 @@ test("renders the single-entry admission draft package workflow", async () => {
   assert.match(pageSource, /正在分段核对事实并生成草稿/);
   assert.match(pageSource, /V4 Pro自动重试后完成事实抽取/);
   assert.match(pageSource, /没有使用程序规则代替模型事实/);
-  assert.match(pageSource, /模型未完成时会明确提示重试/);
+  assert.match(pageSource, /本次未完成/);
   assert.doesNotMatch(pageSource, /连贯合成未完成/);
   assert.doesNotMatch(html, /进入管床/);
   assert.doesNotMatch(html, /合成患者 A02/);
@@ -1288,6 +1387,40 @@ test("generates a useful conditional clinical reference without executable presc
   assert.ok(body.result.suggested_workup.length >= 3);
   assert.ok(body.result.treatment_pathways.length >= 2);
   assert.doesNotMatch(JSON.stringify(body.result), /每日|每次|mg|静滴/);
+});
+
+test("generates diagnosis and plan as two independent model stages", async () => {
+  const diagnosisRun = await clinicalReferenceStageWithMockModel("diagnosis");
+  assert.equal(diagnosisRun.response.status, 200, await diagnosisRun.response.clone().text());
+  const diagnosisBody = await diagnosisRun.response.json();
+  assert.equal(diagnosisBody.stage, "diagnosis");
+  assert.match(diagnosisBody.result.preliminary_diagnosis, /黑色素瘤/);
+  assert.equal(diagnosisRun.upstreamBody.max_output_tokens, 3000);
+  assert.match(diagnosisRun.upstreamBody.input, /本轮只整理初步诊断/);
+
+  const planRun = await clinicalReferenceStageWithMockModel("plan");
+  assert.equal(planRun.response.status, 200, await planRun.response.clone().text());
+  const planBody = await planRun.response.json();
+  assert.equal(planBody.stage, "plan");
+  assert.match(planBody.result.current_priority, /病理与分期/);
+  assert.equal(planRun.upstreamBody.max_output_tokens, 3600);
+  assert.match(planRun.upstreamBody.input, /当前先解决什么/);
+});
+
+test("retries unsupported melanoma site and IHC-molecular conflation in staged generation", async () => {
+  const diagnosisRun = await clinicalReferenceStageRetriesMelanomaDetailError("diagnosis");
+  assert.equal(diagnosisRun.response.status, 200, await diagnosisRun.response.clone().text());
+  assert.equal(diagnosisRun.calls, 2);
+  assert.match(diagnosisRun.prompts[1], /未通过诊断质量门禁/);
+  const diagnosisBody = await diagnosisRun.response.json();
+  assert.doesNotMatch(diagnosisBody.result.preliminary_diagnosis, /皮肤/);
+
+  const planRun = await clinicalReferenceStageRetriesMelanomaDetailError("plan");
+  assert.equal(planRun.response.status, 200, await planRun.response.clone().text());
+  assert.equal(planRun.calls, 2);
+  assert.match(planRun.prompts[1], /未通过计划质量门禁/);
+  const planBody = await planRun.response.json();
+  assert.doesNotMatch(JSON.stringify(planBody.result), /免疫组化具体结果（包括BRAF/);
 });
 
 test("returns an error instead of a generic built-in reference when V4 Pro is empty", async () => {

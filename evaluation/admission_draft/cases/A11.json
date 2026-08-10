@@ -1,0 +1,101 @@
+{
+  "case_id": "A11",
+  "case_name": "多线治疗与进展事件必须逐段进入账本和现病史，基础病及无关旧手术进入既往史",
+  "synthetic": true,
+  "source_text": "【完全合成资料】2023-02因左肺占位行穿刺，病理提示非小细胞肺癌。2023-03至2023-07接受一线方案A共6周期，疗效评估为部分缓解。2024-01影像提示原病灶增大并出现新的胸膜结节，考虑疾病进展。2024-02至2024-08接受二线方案B，最佳疗效为疾病稳定。2025-04复查提示胸膜病灶再次增大。2025-05至2026-06接受三线方案C。2026-08-08出现咳嗽、气促，外院予吸氧等处理后症状仍在，2026-08-10转入我院进一步评估。既往高血压10年，长期口服降压药，具体药名及控制情况待核实；20年前因子宫良性疾病行子宫切除术，具体术式及病理待核实。否认已知药物过敏。",
+  "current_purpose": "咳嗽、气促，外院转入我院进一步评估",
+  "arrival_context": "外院转入我院",
+  "gold": {
+    "required_facts": [
+      { "field": "initial_diagnosis", "value_contains": "非小细胞肺癌", "encounter_scope": "prior", "certainty": "explicit", "source_ids": ["S1"] },
+      { "field": "first_line_treatment", "value_contains": "一线方案A", "encounter_scope": "prior", "certainty": "explicit", "source_ids": ["S1"] },
+      { "field": "first_progression", "value_contains": "考虑疾病进展", "encounter_scope": "prior", "certainty": "uncertain", "source_ids": ["S1"] },
+      { "field": "second_line_treatment", "value_contains": "二线方案B", "encounter_scope": "prior", "certainty": "explicit", "source_ids": ["S1"] },
+      { "field": "second_progression", "value_contains": "再次增大", "encounter_scope": "prior", "certainty": "explicit", "source_ids": ["S1"] },
+      { "field": "third_line_treatment", "value_contains": "三线方案C", "encounter_scope": "prior", "certainty": "explicit", "source_ids": ["S1"] },
+      { "field": "acute_presentation", "value_contains": "咳嗽、气促", "encounter_scope": "current", "certainty": "explicit", "source_ids": ["S1"] },
+      { "field": "past_condition", "value_contains": "高血压10年", "encounter_scope": "prior", "certainty": "explicit", "source_ids": ["S1"] },
+      { "field": "unrelated_surgery", "value_contains": "子宫切除术", "encounter_scope": "prior", "certainty": "explicit", "source_ids": ["S1"] }
+    ],
+    "forbidden_draft_patterns": [
+      { "section": "present_illness", "patterns": ["子宫切除术", "高血压10年"], "label": "P1_BACKGROUND_HISTORY_IN_PRESENT_ILLNESS" },
+      { "section": "present_illness", "patterns": ["确诊疾病进展"], "label": "P0_CERTAINTY_INFLATION" }
+    ],
+    "must_be_empty_sections": ["personal_history", "family_history", "specialist_exam", "diagnosis_summary", "plan_summary"],
+    "required_draft_text": [
+      { "section": "present_illness", "any": ["一线方案A"] },
+      { "section": "present_illness", "any": ["考虑疾病进展"] },
+      { "section": "present_illness", "any": ["二线方案B"] },
+      { "section": "present_illness", "any": ["胸膜病灶再次增大"] },
+      { "section": "present_illness", "any": ["三线方案C"] },
+      { "section": "present_illness", "any": ["转入我院"] },
+      { "section": "past_history", "any": ["高血压10年"] },
+      { "section": "past_history", "any": ["子宫切除术"] },
+      { "section": "allergy_history", "any": ["否认已知药物过敏"] }
+    ]
+  },
+  "reference_output": {
+    "sources": [
+      { "source_id": "S1", "title": "完全合成资料", "evidence": "确诊、三线治疗、两次进展、急性发病、外院处置、本次到院及背景病史" }
+    ],
+    "facts": [
+      { "fact_id": "F1", "field": "initial_diagnosis", "value": "左肺占位穿刺病理提示非小细胞肺癌", "event_time": "2023-02", "event_type": "onset_diagnosis", "encounter_scope": "prior", "certainty": "explicit", "source_ids": ["S1"] },
+      { "fact_id": "F2", "field": "first_line_treatment", "value": "接受一线方案A共6周期，疗效评估为部分缓解", "event_time": "2023-03至2023-07", "event_type": "prior_treatment", "encounter_scope": "prior", "certainty": "explicit", "source_ids": ["S1"] },
+      { "fact_id": "F3", "field": "first_progression", "value": "原病灶增大并出现新的胸膜结节，考虑疾病进展", "event_time": "2024-01", "event_type": "progression_evidence", "encounter_scope": "prior", "certainty": "uncertain", "source_ids": ["S1"] },
+      { "fact_id": "F4", "field": "second_line_treatment", "value": "接受二线方案B，最佳疗效为疾病稳定", "event_time": "2024-02至2024-08", "event_type": "prior_treatment", "encounter_scope": "prior", "certainty": "explicit", "source_ids": ["S1"] },
+      { "fact_id": "F5", "field": "second_progression", "value": "复查提示胸膜病灶再次增大", "event_time": "2025-04", "event_type": "progression_evidence", "encounter_scope": "prior", "certainty": "explicit", "source_ids": ["S1"] },
+      { "fact_id": "F6", "field": "third_line_treatment", "value": "接受三线方案C", "event_time": "2025-05至2026-06", "event_type": "prior_treatment", "encounter_scope": "prior", "certainty": "explicit", "source_ids": ["S1"] },
+      { "fact_id": "F7", "field": "acute_presentation", "value": "出现咳嗽、气促，外院予吸氧等处理后症状仍在", "event_time": "2026-08-08", "event_type": "current_status", "encounter_scope": "current", "certainty": "explicit", "source_ids": ["S1"] },
+      { "fact_id": "F8", "field": "arrival_context", "value": "外院转入我院进一步评估", "event_time": "2026-08-10", "event_type": "current_purpose", "encounter_scope": "current", "certainty": "explicit", "source_ids": ["S1"] },
+      { "fact_id": "F9", "field": "past_condition", "value": "高血压10年，长期口服降压药，具体药名及控制情况待核实", "event_time": "既往", "event_type": "past_history", "encounter_scope": "prior", "certainty": "explicit", "source_ids": ["S1"] },
+      { "fact_id": "F10", "field": "unrelated_surgery", "value": "20年前因子宫良性疾病行子宫切除术，具体术式及病理待核实", "event_time": "20年前", "event_type": "past_history", "encounter_scope": "prior", "certainty": "explicit", "source_ids": ["S1"] },
+      { "fact_id": "F11", "field": "allergy_history", "value": "否认已知药物过敏", "event_time": "既往", "event_type": "allergy_history", "encounter_scope": "prior", "certainty": "explicit", "source_ids": ["S1"] }
+    ],
+    "draft": {
+      "chief_complaint": "肺癌多线治疗后，咳嗽、气促2天",
+      "present_illness": "患者2023-02因左肺占位行穿刺，病理提示非小细胞肺癌。2023-03至2023-07接受一线方案A共6周期，疗效评估为部分缓解。2024-01影像提示原病灶增大并出现新的胸膜结节，考虑疾病进展；2024-02至2024-08接受二线方案B，最佳疗效为疾病稳定。2025-04复查提示胸膜病灶再次增大，2025-05至2026-06接受三线方案C。2026-08-08出现咳嗽、气促，外院予吸氧等处理后症状仍在，2026-08-10由外院转入我院进一步评估。",
+      "past_history": "高血压10年，长期口服降压药，具体药名及控制情况待核实。20年前因子宫良性疾病行子宫切除术，具体术式及病理待核实。",
+      "personal_history": "",
+      "family_history": "",
+      "allergy_history": "否认已知药物过敏。",
+      "specialist_exam": "",
+      "diagnosis_summary": "",
+      "plan_summary": "",
+      "pending_fields": ["长期降压药名称及控制情况", "既往子宫切除具体术式及病理"]
+    },
+    "review_items": []
+  },
+  "constructed_failure": {
+    "sources": [
+      { "source_id": "S1", "title": "完全合成资料", "evidence": "确诊、治疗、进展、本次症状及背景病史" }
+    ],
+    "facts": [
+      { "fact_id": "F1", "field": "initial_diagnosis", "value": "左肺占位穿刺病理提示非小细胞肺癌", "event_time": "2023-02", "event_type": "onset_diagnosis", "encounter_scope": "prior", "certainty": "explicit", "source_ids": ["S1"] },
+      { "fact_id": "F2", "field": "first_line_treatment", "value": "接受一线方案A", "event_time": "2023-03至2023-07", "event_type": "prior_treatment", "encounter_scope": "prior", "certainty": "explicit", "source_ids": ["S1"] },
+      { "fact_id": "F7", "field": "acute_presentation", "value": "出现咳嗽、气促", "event_time": "2026-08-08", "event_type": "current_status", "encounter_scope": "current", "certainty": "explicit", "source_ids": ["S1"] }
+    ],
+    "draft": {
+      "chief_complaint": "肺癌治疗后咳嗽、气促2天",
+      "present_illness": "患者2023年确诊非小细胞肺癌，接受一线方案A后于2024年确诊疾病进展。本次因咳嗽、气促入院。高血压10年，20年前行子宫切除术。",
+      "past_history": "",
+      "personal_history": "",
+      "family_history": "",
+      "allergy_history": "",
+      "specialist_exam": "",
+      "diagnosis_summary": "",
+      "plan_summary": "",
+      "pending_fields": []
+    },
+    "review_items": []
+  },
+  "expected_failure_labels": [
+    "P1_KEY_FACT_MISSING:second_line_treatment",
+    "P1_KEY_FACT_MISSING:third_line_treatment",
+    "P1_KEY_FACT_MISSING:unrelated_surgery",
+    "P1_DRAFT_OMISSION:present_illness",
+    "P1_DRAFT_OMISSION:past_history",
+    "P1_DRAFT_OMISSION:allergy_history",
+    "P1_BACKGROUND_HISTORY_IN_PRESENT_ILLNESS",
+    "P0_CERTAINTY_INFLATION"
+  ]
+}
