@@ -26,7 +26,21 @@ export const parseModelJson = (text: string) => {
   }
 };
 
-type ModelRequestOptions = { maxOutputTokens?: number; timeoutMs?: number };
+type ModelRequestOptions = {
+  maxOutputTokens?: number;
+  timeoutMs?: number;
+  thinking?: "enabled" | "disabled" | "auto";
+  jsonObject?: boolean;
+};
+
+const requestBody = (model: string, prompt: string, options: ModelRequestOptions, stream = false) => ({
+  model,
+  input: prompt,
+  ...(stream ? { stream: true } : {}),
+  ...(options.thinking ? { thinking: { type: options.thinking } } : {}),
+  ...(options.jsonObject ? { text: { format: { type: "json_object" } } } : {}),
+  ...(options.maxOutputTokens ? { max_output_tokens: options.maxOutputTokens } : {}),
+});
 
 const streamDelta = (payload: unknown) => {
   if (!payload || typeof payload !== "object") return "";
@@ -40,7 +54,7 @@ export async function* requestModelStream(baseUrl: string, apiKey: string, model
   const upstream = await fetch(`${baseUrl}/responses`, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", Accept: "text/event-stream" },
-    body: JSON.stringify({ model, input: prompt, stream: true, ...(options.maxOutputTokens ? { max_output_tokens: options.maxOutputTokens } : {}) }),
+    body: JSON.stringify(requestBody(model, prompt, options, true)),
     signal: AbortSignal.timeout(options.timeoutMs || 75000),
   });
   if (!upstream.ok) throw new Error(`上游模型请求失败：${upstream.status}`);
@@ -87,7 +101,7 @@ export async function requestModel(baseUrl: string, apiKey: string, model: strin
   const upstream = await fetch(`${baseUrl}/responses`, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model, input: prompt, ...(options.maxOutputTokens ? { max_output_tokens: options.maxOutputTokens } : {}) }),
+    body: JSON.stringify(requestBody(model, prompt, options)),
     signal: AbortSignal.timeout(options.timeoutMs || 75000),
   });
   const raw = await upstream.text();

@@ -28,11 +28,27 @@ const pathItems = (value: unknown, limit = 8): ReferencePathItem[] => Array.isAr
   return [{ title, trigger, purpose }];
 }).slice(0, limit) : [];
 
+const explicitEvidenceText = (evidenceText: string) => {
+  try {
+    const parsed = JSON.parse(evidenceText) as { facts?: Array<{ value?: unknown; certainty?: unknown }> };
+    if (Array.isArray(parsed.facts)) return parsed.facts
+      .filter((fact) => fact?.certainty === "explicit" || fact?.certainty === "doctor_confirmed")
+      .map((fact) => typeof fact.value === "string" ? fact.value : "")
+      .join("\n");
+  } catch { /* fall through to the original bounded evidence text */ }
+  return evidenceText;
+};
+
+const normalizeStage = (value: string) => value.toUpperCase().replace(/\s+/g, "").replace(/Ⅳ/g, "IV").replace(/Ⅲ/g, "III").replace(/Ⅱ/g, "II").replace(/Ⅰ/g, "I");
+
 const unsupportedDiagnosticCertainty = (diagnosticText: string, evidenceText: string) => {
+  const explicitEvidence = explicitEvidenceText(evidenceText);
   const unsupportedTerms = ["转移", "化疗"];
-  if (unsupportedTerms.some((term) => diagnosticText.includes(term) && !evidenceText.includes(term))) return true;
+  if (unsupportedTerms.some((term) => diagnosticText.includes(term) && !explicitEvidence.includes(term))) return true;
+  const unsupportedTemporalTerms = ["未恢复", "持续性", "进行性", "反复", "逐渐加重", "较前恶化"];
+  if (unsupportedTemporalTerms.some((term) => diagnosticText.includes(term) && !explicitEvidence.includes(term))) return true;
   const stages = diagnosticText.match(/(?:IV|III|II|I|Ⅳ|Ⅲ|Ⅱ|Ⅰ|[1-4])\s*期/gi) || [];
-  return stages.some((stage) => !evidenceText.toUpperCase().includes(stage.toUpperCase().replace(/\s+/g, "")));
+  return stages.some((stage) => !normalizeStage(explicitEvidence).includes(normalizeStage(stage)));
 };
 
 export function parseClinicalReference(raw: string, evidenceText = ""): ClinicalReferenceBundle {

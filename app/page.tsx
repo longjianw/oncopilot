@@ -6,6 +6,8 @@ import type { ClinicalReferenceBundle } from "../lib/clinical-reference";
 
 type Stage = "input" | "result";
 type UploadStatus = "preparing" | "recognizing" | "done" | "error";
+type ArrivalContext = "" | "外院转入我院" | "本院直接入院" | "本次到院身份待确认";
+type ChatMode = "documentation" | "clinical_reference";
 type DraftField = "chief_complaint" | "present_illness" | "past_history" | "personal_history" | "family_history" | "allergy_history" | "specialist_exam" | "diagnosis_summary" | "plan_summary";
 type Fact = { fact_id: string; field: string; value: string; event_time: string; event_type: string; encounter_scope: "prior" | "current" | "unclear"; certainty: "explicit" | "doctor_confirmed" | "uncertain" | "pending"; source_ids: string[] };
 type ReviewOption = { option_id: string; label: string; text: string; tone: "positive" | "negative" | "neutral"; detail_prompt?: string };
@@ -23,6 +25,11 @@ const MAX_UPLOAD_BYTES = 480_000;
 const MAX_EDGE = 1600;
 const MAX_SOURCE_CHARS = 32_000;
 const RECOGNITION_CONCURRENCY = 3;
+const arrivalContextOptions: Array<{ value: Exclude<ArrivalContext, "">; label: string; note: string }> = [
+  { value: "外院转入我院", label: "外院转入我院", note: "把外院转诊意见接成我院入院结尾" },
+  { value: "本院直接入院", label: "本院直接入院", note: "本院门诊/急诊后收治" },
+  { value: "本次到院身份待确认", label: "暂未确认", note: "不杜撰转入关系，保留待核对" },
+];
 
 const sectionLabels: Array<{ field: DraftField; label: string; hint: string; placeholder: string; large?: boolean }> = [
   { field: "chief_complaint", label: "主诉", hint: "疾病或主要症状 + 时间 + 本次目的", placeholder: "可在上方点选候选项，也可直接输入" },
@@ -172,6 +179,7 @@ export default function Home() {
   const [stage, setStage] = useState<Stage>("input");
   const [sourceText, setSourceText] = useState("");
   const [currentPurpose, setCurrentPurpose] = useState("");
+  const [arrivalContext, setArrivalContext] = useState<ArrivalContext>("");
   const [draft, setDraft] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [analysisElapsed, setAnalysisElapsed] = useState(0);
@@ -183,6 +191,7 @@ export default function Home() {
   const [recomposeLoading, setRecomposeLoading] = useState(false);
   const [recomposeNotice, setRecomposeNotice] = useState("");
   const [chatOpen, setChatOpen] = useState(false);
+  const [chatMode, setChatMode] = useState<ChatMode>("documentation");
   const [chatContext, setChatContext] = useState("当前模板整体");
   const [chatMessages, setChatMessages] = useState<ChatEntry[]>([]);
   const [chatInput, setChatInput] = useState("");
@@ -283,8 +292,17 @@ export default function Home() {
 
   const openTemplateChat = (item?: ReviewItem) => {
     const context = item ? `${item.prompt}；提示：${item.help}` : "当前模板整体与未完成核对项";
-    setChatContext(context); setChatOpen(true);
+    if (chatMode !== "documentation") { setChatMessages([]); setChatInput(""); setChatElapsed(0); }
+    setChatMode("documentation"); setChatContext(context); setChatOpen(true);
     if (item) setChatInput(`“${item.prompt}”这一项具体应该核对和记录哪些内容？`);
+  };
+
+  const effectiveCurrentPurpose = (result: AnalysisResult) => currentPurpose.trim()
+    || result.facts.find((fact) => fact.event_type === "current_purpose" && fact.encounter_scope === "current")?.value
+    || "";
+
+  const openReferenceChat = (context = "当前病例的诊断与下一步", preset = "") => {
+    setChatMode("clinical_reference"); setChatContext(context); setChatMessages([]); setChatInput(preset); setChatElapsed(0); setChatOpen(true);
   };
 
   const sendChat = async (event: FormEvent) => {
@@ -296,11 +314,14 @@ export default function Home() {
     const startedAt = Date.now();
     setChatMessages([...nextHistory, { role: "assistant", content: "" }]); setChatInput(""); setChatElapsed(0); setChatLoading(true);
     try {
-      // Sites currently requires the trailing slash for this newly added route.
-      const response = await fetch("/api/template-chat/", {
+      const referenceConversation = chatMode === "clinical_reference";
+      // Sites currently requires a trailing slash for these streaming routes.
+      const response = await fetch(referenceConversation ? "/api/clinical-reference-chat/" : "/api/template-chat/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message, history: chatMessages.slice(-6), template_name: draft.template_name, item_context: chatContext, model: selectedModel }),
+        body: JSON.stringify(referenceConversation
+          ? { message, history: chatMessages.slice(-6), facts: draft.facts, current_purpose: effectiveCurrentPurpose(draft), reference: clinicalReference, context: chatContext }
+          : { message, history: chatMessages.slice(-6), template_name: draft.template_name, item_context: chatContext, model: selectedModel }),
       });
       if (!response.ok) {
         const payload = await response.json() as { error?: string };
@@ -336,10 +357,10 @@ export default function Home() {
       };
     });
     try {
-      const response = await fetch("/api/clinical-reference", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "generate", facts: result.facts, current_purpose: currentPurpose }) });
+      const response = await fetch("/api/clinical-reference", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "generate", facts: result.facts, current_purpose: effectiveCurrentPurpose(result) }) });
       const payload = await response.json() as { result?: ClinicalReferenceBundle; model?: string; error?: string };
       if (!response.ok || !payload.result) throw new Error(payload.error || "AI参考暂时没有生成出来。");
-      setClinicalReference(payload.result); setReferenceModel(payload.model || "deepseek-v4-pro"); applyAutomaticReference(payload.result);
+      setClinicalReference(payload.result); setReferenceModel(payload.model || "deepseek-v4-pro"); applyAutomaticReference(payload.result); setChatMessages([]);
     } catch (caught) { setReferenceNotice(caught instanceof Error ? caught.message : "AI参考暂时没有生成出来。"); }
     finally { setReferenceLoading(false); }
   };
@@ -348,7 +369,7 @@ export default function Home() {
     if (!draft || !clinicalReference || verificationLoading) return;
     setVerificationLoading(action); setReferenceNotice("");
     try {
-      const response = await fetch("/api/clinical-reference", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, facts: draft.facts, current_purpose: currentPurpose, reference: clinicalReference }) });
+      const response = await fetch("/api/clinical-reference", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, facts: draft.facts, current_purpose: effectiveCurrentPurpose(draft), reference: clinicalReference }) });
       const payload = await response.json() as { result?: ClinicalReferenceBundle; error?: string };
       if (!response.ok || !payload.result) throw new Error(payload.error || "交叉核验暂时失败。");
       setClinicalReference(payload.result);
@@ -367,16 +388,16 @@ export default function Home() {
     if (sourceText.trim().length < 20 || loading) return;
     setLoading(true); setAnalysisElapsed(0); setAnalysisNotice(""); setError("");
     try {
-      const response = await fetch("/api/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source_text: sourceText, current_purpose: currentPurpose }) });
-      const payload = await readPayload(response) as { result?: AnalysisResult; model?: string; processing_status?: "model_generated"; fact_fallback_count?: number; rule_fallback_count?: number; raw_fallback_count?: number; error?: string };
+      const response = await fetch("/api/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source_text: sourceText, current_purpose: currentPurpose, arrival_context: arrivalContext }) });
+      const payload = await readPayload(response) as { result?: AnalysisResult; model?: string; processing_status?: "model_generated"; fact_retry_count?: number; draft_retry_count?: number; error?: string };
       if (!response.ok || !payload.result) throw new Error(payload.error || "AI整理失败，请稍后重试。");
       const notices = [
-        payload.rule_fallback_count ? `${payload.rule_fallback_count}段AI结构化未完成，已按明确标题和临床关键词提取为可核对事实，仍会用于生成草稿。` : "",
-        payload.raw_fallback_count ? `${payload.raw_fallback_count}段未提取到可靠事实，仅保留在来源与待核对区。` : "",
+        payload.fact_retry_count ? `${payload.fact_retry_count}段由V4 Pro自动重试后完成事实抽取；没有使用程序规则代替模型事实。` : "",
+        payload.draft_retry_count ? "首版文书未通过质量门禁，已由V4 Pro自动重写后再展示。" : "",
         payload.processing_status === "model_generated" && payload.model ? `当前草稿由 ${payload.model} 根据结构化事实生成。` : "",
       ].filter(Boolean);
       if (notices.length) setAnalysisNotice(notices.join(" "));
-      setDraft(payload.result); setStage("result"); void generateClinicalReference(payload.result);
+      setDraft(payload.result); setClinicalReference(null); setChatMessages([]); setStage("result"); void generateClinicalReference(payload.result);
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "AI整理失败，请稍后重试。";
       setError(/Failed to fetch|Load failed|NetworkError/i.test(message)
@@ -448,7 +469,7 @@ export default function Home() {
     setSourceText(await file.text()); setError("");
   };
 
-  const reset = () => { setStage("input"); setSourceText(""); setCurrentPurpose(""); setDraft(null); setUploads([]); setSelectedChoices({}); setChoiceDetails({}); setAppliedChoiceText({}); setRecomposeNotice(""); setChatOpen(false); setChatContext("当前模板整体"); setChatMessages([]); setChatInput(""); setChatModel("deepseek-v4-pro"); setChatElapsed(0); setAnalysisElapsed(0); setAnalysisNotice(""); setClinicalReference(null); setReferenceLoading(false); setReferenceElapsed(0); setReferenceModel(""); setVerificationLoading(null); setReferenceNotice(""); setCopied(false); setError(""); };
+  const reset = () => { setStage("input"); setSourceText(""); setCurrentPurpose(""); setArrivalContext(""); setDraft(null); setUploads([]); setSelectedChoices({}); setChoiceDetails({}); setAppliedChoiceText({}); setRecomposeNotice(""); setChatOpen(false); setChatMode("documentation"); setChatContext("当前模板整体"); setChatMessages([]); setChatInput(""); setChatModel("deepseek-v4-pro"); setChatElapsed(0); setAnalysisElapsed(0); setAnalysisNotice(""); setClinicalReference(null); setReferenceLoading(false); setReferenceElapsed(0); setReferenceModel(""); setVerificationLoading(null); setReferenceNotice(""); setCopied(false); setError(""); };
   const copyDraft = async () => {
     if (!draft) return;
     const text = sectionLabels.map(({ field, label }) => draft[field].trim() ? `${label}：\n${draft[field].trim()}` : "").filter(Boolean).join("\n\n");
@@ -472,6 +493,7 @@ export default function Home() {
         <div className="card-heading"><div><span>第一步只有这一个入口</span><h2>拍照、上传文件，或粘贴文字</h2></div><button type="button" onClick={() => { setSourceText(syntheticSample); setCurrentPurpose("进一步抗肿瘤治疗"); setError(""); }}>试试少量资料</button></div>
         <p className="reference-status"><b>安全边界</b> 仅使用完全合成或严格脱敏资料；本地规则只约束草稿结构，不替代本院模板和上级审核。</p>
         <label className="purpose-field"><span>本次来院目的 <b>可选，但建议填写</b></span><input value={currentPurpose} onChange={(event) => setCurrentPurpose(event.target.value)} maxLength={160} placeholder="例如：继续治疗、复查评估、处理新出现的症状……" /><small>这行用于区分既往住院、出院计划与本次就诊。</small></label>
+        <div className="arrival-context" aria-label="本次到院关系"><span>本次到院关系 <b>建议选择</b></span><div>{arrivalContextOptions.map((option) => <button type="button" key={option.value} className={arrivalContext === option.value ? "selected" : ""} aria-pressed={arrivalContext === option.value} onClick={() => setArrivalContext(option.value)}><strong>{option.label}</strong><small>{option.note}</small></button>)}</div><small>例如外院病历写“建议转上级医院”时，选择“外院转入我院”后，草稿会以本院收治作为本次结尾；若资料只有外院转诊意见而未选择，系统会先要求确认，不生成错位草稿。</small></div>
         <div className="image-actions" aria-label="资料文件输入"><label className="image-action camera-action">拍照<input type="file" accept="image/*" capture="environment" multiple onChange={chooseDocuments} /></label><label className="image-action">上传图片或 PDF<input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif,application/pdf,.pdf" multiple onChange={chooseDocuments} /></label><span>最多 {MAX_ITEMS} 个资料页；PDF 最多 {MAX_PDF_PAGES} 页；HEIC 会先在本机转换</span></div>
         {uploads.length > 0 && <div className="upload-list">{uploads.map((item) => <div className={`upload-item ${item.status}`} key={item.id}>{item.preview ? <Image unoptimized src={item.preview} width={54} height={42} alt="待识别资料预览" /> : <span className="file-icon">PDF</span>}<span><strong>{item.name}</strong><small>{item.status === "recognizing" ? "正在用图像模型提取入院关键资料…" : item.status === "done" ? `已由 ${item.model || "图像模型"} 提取关键资料，请核对` : item.error || "文件处理失败"}</small>{item.status === "error" && <button type="button" onClick={() => void retryUpload(item)}>重试本页</button>}</span></div>)}</div>}
         <textarea value={sourceText} onChange={(event) => { setSourceText(event.target.value); setError(""); }} placeholder="把外院病理、检查、手术和治疗经过，本次症状，已询问的病史，实际查体，以及医生明确写下的诊断/计划放在这里……" aria-label="患者资料" maxLength={MAX_SOURCE_CHARS} />
@@ -495,12 +517,12 @@ export default function Home() {
         <div className="recompose-bar"><div><strong>选择和填空完成后</strong><span>让 AI 去重、调整顺序，并重新组织主诉、现病史和其他模块。</span>{recomposeNotice && <small>{recomposeNotice}</small>}</div><button type="button" disabled={recomposeLoading || confirmations().length === 0} onClick={recomposeDraft}>{recomposeLoading ? "正在重新整理…" : "一键重新整理草稿"}</button></div>
       </section>}
       <section className="clinical-reference-panel">
-        <div className="reference-heading"><div><span>诊断与下一步 · AI参考候选</span><h2>由 V4 Pro 根据本病例资料生成，再做来源核验</h2><p>不再先显示通用内置答案。模型未完成时会明确提示重试；只有病例专属结果通过质量校验后，才进入诊断与计划编辑区。</p></div><div className="reference-actions"><button type="button" disabled={referenceLoading} onClick={() => generateClinicalReference(draft)}>{referenceLoading ? `V4 Pro生成中 ${referenceElapsed}秒` : "重新用V4 Pro生成"}</button><button type="button" disabled={!clinicalReference || Boolean(verificationLoading)} onClick={() => verifyClinicalReference("local")}>{verificationLoading === "local" ? "本地核验中…" : "核验已接入来源卡"}</button><button type="button" disabled={!clinicalReference || Boolean(verificationLoading)} onClick={() => verifyClinicalReference("web")}>{verificationLoading === "web" ? "联网核验中…" : "联网核验权威网页"}</button></div></div>
+        <div className="reference-heading"><div><span>诊断与下一步 · AI参考候选</span><h2>由 V4 Pro 根据本病例资料生成，再做来源核验</h2><p>不再先显示通用内置答案，模型未完成时会明确提示重试。首屏只保留重点方向；对某一项想继续追问时，可带着本病例的结构化事实继续讨论，而不必重新粘贴资料。</p></div><div className="reference-actions"><button type="button" disabled={referenceLoading} onClick={() => generateClinicalReference(draft)}>{referenceLoading ? `V4 Pro生成中 ${referenceElapsed}秒` : "重新用V4 Pro生成"}</button><button type="button" disabled={!clinicalReference || Boolean(verificationLoading)} onClick={() => openReferenceChat("当前病例的诊断与下一步", "针对当前病例，我想进一步讨论：")} >继续问本病例</button><button type="button" disabled={!clinicalReference || Boolean(verificationLoading)} onClick={() => verifyClinicalReference("local")}>{verificationLoading === "local" ? "本地核验中…" : "核验已接入来源卡"}</button><button type="button" disabled={!clinicalReference || Boolean(verificationLoading)} onClick={() => verifyClinicalReference("web")}>{verificationLoading === "web" ? "联网核验中…" : "联网核验权威网页"}</button></div></div>
         {referenceLoading && <div className="reference-loading"><i className="spinner" /> V4 Pro正在根据结构化事实生成病例专属的初步诊断、候选检查和分层诊疗方向，已等待 {referenceElapsed} 秒……</div>}
         {clinicalReference && <div className="reference-content">
           <div className="reference-state"><strong>{clinicalReference.verification_state === "model_only" ? `${referenceModel || "V4 Pro"} 病例专属初稿 · 未交叉核验` : clinicalReference.verification_state === "local_checked" ? "已用本地来源卡核验" : "已联网读取权威网页核验"}</strong><span>{clinicalReference.disclaimer}</span></div>
           <div className="reference-grid"><article><h3>初步诊断与依据</h3><p><b>初步诊断：</b>{clinicalReference.preliminary_diagnosis}</p><p><b>诊断依据：</b>{clinicalReference.diagnostic_basis.join("；") || "待补"}</p><p><b>鉴别诊断：</b>{clinicalReference.differential_diagnosis.join("；") || "待医生确认"}</p><button type="button" onClick={() => adoptReference("diagnosis_summary")}>填入初步诊断整理</button></article><article><h3>尚缺关键前提</h3><ul>{clinicalReference.missing_prerequisites.map((item) => <li key={item}>{item}</li>)}</ul></article></div>
-          <div className="reference-paths"><article><h3>候选检查与评估</h3>{clinicalReference.suggested_workup.map((item) => <div key={`${item.title}-${item.trigger}`}><strong>{item.title}</strong><span>何时考虑：{item.trigger}</span><small>目的：{item.purpose}</small></div>)}</article><article><h3>分层诊疗方向</h3>{clinicalReference.treatment_pathways.map((item) => <div key={`${item.title}-${item.trigger}`}><strong>{item.title}</strong><span>适用前提：{item.trigger}</span><small>讨论目的：{item.purpose}</small></div>)}</article></div>
+          <div className="reference-paths"><article><h3>候选检查与评估</h3>{clinicalReference.suggested_workup.map((item) => <div key={`${item.title}-${item.trigger}`}><strong>{item.title}</strong><span>何时考虑：{item.trigger}</span><small>目的：{item.purpose}</small><button type="button" onClick={() => openReferenceChat(`候选检查：${item.title}`, `关于“${item.title}”，针对当前病例还需怎样判断、补齐哪些前提？`)}>继续问这一项</button></div>)}</article><article><h3>分层诊疗方向</h3>{clinicalReference.treatment_pathways.map((item) => <div key={`${item.title}-${item.trigger}`}><strong>{item.title}</strong><span>适用前提：{item.trigger}</span><small>讨论目的：{item.purpose}</small><button type="button" onClick={() => openReferenceChat(`诊疗方向：${item.title}`, `关于“${item.title}”，针对当前病例下一步怎样进一步判断？如涉及药物，请同时列出执行前必须核对的处方与药学字段。`)}>继续问这一项</button></div>)}</article></div>
           <button type="button" className="adopt-plan" onClick={() => adoptReference("plan_summary")}>把候选路径填入计划整理</button>
           {clinicalReference.checks && <div className="reference-checks"><h3>交叉核验结果</h3>{clinicalReference.checks.map((check) => <div key={`${check.topic}-${check.source}`} className={check.status}><b>{check.status === "supported" ? "来源支持" : check.status === "conditional" ? "有条件支持" : "本次未找到"}</b><span><strong>{check.topic}</strong><small>{check.note}</small><em>{check.url ? <a href={check.url} target="_blank" rel="noreferrer">{check.source}</a> : check.source}</em></span></div>)}</div>}
         </div>}
@@ -516,7 +538,7 @@ export default function Home() {
       <details className="source-details"><summary>查看结构化事实与资料来源（{draft.facts.length} 条事实）</summary><div className="fact-list">{draft.facts.map((fact) => <div key={fact.fact_id}><span className={`certainty ${fact.certainty}`}>{fact.certainty === "uncertain" ? "不确定" : fact.certainty === "doctor_confirmed" ? "医生明确" : fact.certainty === "pending" ? "待核对" : "资料明确"}</span><p><strong>{fact.value}</strong><small>{fact.event_time} · {fact.encounter_scope === "current" ? "本次" : fact.encounter_scope === "prior" ? "既往" : "归属待核对"} · 来源 {fact.source_ids.join("、")}</small></p></div>)}</div><div className="source-list">{draft.sources.map((source) => <div key={source.source_id}><b>{source.source_id}</b><span><strong>{source.title}</strong><small>{source.evidence}</small></span></div>)}</div></details>
       <div className="result-actions"><button type="button" className="secondary-action" onClick={() => setStage("input")}>返回补充原始资料</button><button type="button" className="primary-action compact" onClick={reset}>整理另一名患者</button></div>
       <button type="button" className="floating-chat" onClick={() => openTemplateChat()}>问 AI · 文书核对</button>
-      {chatOpen && <aside className="chat-drawer" aria-label="AI文书核对窗口"><div className="chat-header"><div><strong>问 AI · 文书核对</strong><small>{chatContext}</small></div><button type="button" onClick={() => setChatOpen(false)} aria-label="关闭聊天">×</button></div><div className="chat-boundary">可以问“这项要核对什么、怎样记录”；AI不会替患者回答，也不做诊断和治疗建议。</div><div className="chat-models" aria-label="回答模型">{chatModelOptions.map((option) => <button type="button" key={option.id} className={chatModel === option.id ? "selected" : ""} disabled={chatLoading} onClick={() => setChatModel(option.id)}><strong>{option.label}</strong><small>{option.note}</small></button>)}</div><div className="chat-messages">{chatMessages.length === 0 ? <div className="chat-empty"><p>例如：</p><button type="button" onClick={() => setChatInput("区域淋巴结这一项，通常要记录哪些部位和查体特征？")}>区域淋巴结要记什么？</button><button type="button" onClick={() => setChatInput("一个阳性症状需要补充哪些时间和程度信息？")}>阳性症状怎么补细节？</button></div> : chatMessages.map((message, index) => <div className={message.role} key={`${message.role}-${index}`}><div className="chat-copy">{renderChatContent(message.content)}</div>{message.role === "assistant" && message.modelLabel && <small className="chat-meta">{message.modelLabel} · {message.elapsedSeconds}秒</small>}</div>)}{chatLoading && <div className="assistant loading"><i className="spinner" />正在思考 {chatElapsed} 秒…</div>}</div><form onSubmit={sendChat}><textarea value={chatInput} onChange={(event) => setChatInput(event.target.value)} maxLength={1200} placeholder="只输入完全合成或严格脱敏内容……" /><button type="submit" disabled={!chatInput.trim() || chatLoading}>发送</button></form></aside>}
+      {chatOpen && <aside className={`chat-drawer ${chatMode === "clinical_reference" ? "clinical-reference-chat" : "documentation-chat"}`} aria-label={chatMode === "clinical_reference" ? "本病例继续讨论窗口" : "AI文书核对窗口"}><div className="chat-header"><div><strong>{chatMode === "clinical_reference" ? "继续问本病例" : "问 AI · 文书核对"}</strong><small>{chatContext}</small></div><button type="button" onClick={() => setChatOpen(false)} aria-label="关闭聊天">×</button></div><div className="chat-boundary">{chatMode === "clinical_reference" ? "基于本病例结构化事实和本轮候选继续讨论。药物、剂量、溶媒、配伍和输注必须同时核对病情条件、院内药品信息与药师/上级审核；当前未接入本院药品字典时，系统不会编造成可直接发送的配液医嘱。" : "可以问“这项要核对什么、怎样记录”；AI不会替患者回答，也不做诊断和治疗建议。"}</div>{chatMode === "documentation" && <div className="chat-models" aria-label="回答模型">{chatModelOptions.map((option) => <button type="button" key={option.id} className={chatModel === option.id ? "selected" : ""} disabled={chatLoading} onClick={() => setChatModel(option.id)}><strong>{option.label}</strong><small>{option.note}</small></button>)}</div>}<div className="chat-messages">{chatMessages.length === 0 ? <div className="chat-empty"><p>例如：</p>{chatMode === "clinical_reference" ? <><button type="button" onClick={() => setChatInput("当前病例的抗感染方向有哪些候选？在决定具体药物前，我还必须核对哪些病情、病原学、肝肾功能、过敏与院内药学字段？")}>抗感染还要核对什么？</button><button type="button" onClick={() => setChatInput("如果上级建议某个抗菌药方案，开医嘱前应补齐哪些剂量、频次、溶媒、输注和配伍字段，避免护士退单？")}>避免护士退单要核对什么？</button></> : <><button type="button" onClick={() => setChatInput("区域淋巴结这一项，通常要记录哪些部位和查体特征？")}>区域淋巴结要记什么？</button><button type="button" onClick={() => setChatInput("一个阳性症状需要补充哪些时间和程度信息？")}>阳性症状怎么补细节？</button></>}</div> : chatMessages.map((message, index) => <div className={message.role} key={`${message.role}-${index}`}><div className="chat-copy">{renderChatContent(message.content)}</div>{message.role === "assistant" && message.modelLabel && <small className="chat-meta">{message.modelLabel} · {message.elapsedSeconds}秒</small>}</div>)}{chatLoading && <div className="assistant loading"><i className="spinner" />正在思考 {chatElapsed} 秒…</div>}</div><form onSubmit={sendChat}><textarea value={chatInput} onChange={(event) => setChatInput(event.target.value)} maxLength={1200} placeholder={chatMode === "clinical_reference" ? "例如：抗感染具体如何进一步判断？开立医嘱前还缺什么？" : "只输入完全合成或严格脱敏内容……"} /><button type="submit" disabled={!chatInput.trim() || chatLoading}>发送</button></form></aside>}
     </section>}
   </main>;
 }

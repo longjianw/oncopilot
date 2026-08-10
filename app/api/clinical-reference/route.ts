@@ -3,7 +3,30 @@ import { ClinicalReferenceBundle, localReferenceChecks, parseClinicalReference, 
 
 type Fact = { field?: unknown; value?: unknown; event_time?: unknown; event_type?: unknown; encounter_scope?: unknown; certainty?: unknown; source_ids?: unknown };
 
-const validFacts = (value: unknown): Fact[] => Array.isArray(value) ? value.filter((fact) => fact && typeof fact === "object" && typeof (fact as Fact).value === "string").slice(0, 80) : [];
+const validFacts = (value: unknown): Fact[] => {
+  if (!Array.isArray(value)) return [];
+  const facts: Fact[] = [];
+  let totalCharacters = 0;
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const fact = item as Fact;
+    const field = typeof fact.field === "string" ? fact.field.slice(0, 80) : "";
+    const factValue = typeof fact.value === "string" ? fact.value.trim() : "";
+    if (!factValue || factValue.length > 800 || field === "unparsed_source_segment") continue;
+    if (facts.length >= 60 || totalCharacters + factValue.length > 24_000) break;
+    totalCharacters += factValue.length;
+    facts.push({
+      field,
+      value: factValue,
+      event_time: typeof fact.event_time === "string" ? fact.event_time.slice(0, 80) : "",
+      event_type: typeof fact.event_type === "string" ? fact.event_type.slice(0, 80) : "other",
+      encounter_scope: typeof fact.encounter_scope === "string" ? fact.encounter_scope.slice(0, 20) : "unclear",
+      certainty: typeof fact.certainty === "string" ? fact.certainty.slice(0, 24) : "pending",
+      source_ids: Array.isArray(fact.source_ids) ? fact.source_ids.filter((source): source is string => typeof source === "string").slice(0, 8) : [],
+    });
+  }
+  return facts;
+};
 const stripHtml = (value: string) => value
   .replace(/<script[\s\S]*?<\/script>/gi, " ")
   .replace(/<style[\s\S]*?<\/style>/gi, " ")
@@ -67,6 +90,7 @@ export async function POST(request: Request) {
       "当前是入院记录场景，不是出院记录。输出只使用‘初步诊断’，不得生成‘出院诊断’；既往出院记录中的诊断只能作为既往证据。初步诊断需区分明确诊断、待排诊断、分期和并发症；鉴别诊断只围绕当前确有疑问的问题，不机械罗列。",
       "这不是最终诊疗决定。只能使用已提供的结构化事实，不得编造原发部位、分期、转移、基因状态或治疗反应；不得给药物剂量、频次、直接可执行处方或出院去向。每个检查和治疗方向必须写trigger（什么条件下考虑）与purpose（为了解决什么问题）。",
       "诊断及诊断依据必须沿用资料原词：资料只写‘全身治疗’时不得改写为‘化疗’，只写结节或复发时不得自行升级为转移或某一具体分期。缺少当前数值或原始报告时，相关并发问题使用‘考虑/待排/待明确’，不能写成已经达到某诊断标准。",
+      "单次检验或单个时间点只能写该次结果，不能扩写成‘持续、进行性、反复、未恢复或较前恶化’；只有结构化事实明确提供纵向变化时才能使用这些表述。",
       "资料较少时也不能只说资料不足：应结合已经明确的肿瘤类型、既往治疗和当前突出问题，生成有病例针对性的补充前提和条件性讨论；不能把某一瘤种的固定字段套到其他病种。PET-CT、分子检测等只能作为有条件候选，不能写成人人必须。",
       "控制篇幅：诊断依据2至4条、鉴别诊断0至3条、关键前提3至6条、候选检查3至5项、诊疗方向2至4项；每项只保留一个明确问题，不重复展开。",
       "只返回完整JSON：{\"preliminary_diagnosis\":\"\",\"diagnostic_basis\":[\"\"],\"differential_diagnosis\":[\"\"],\"missing_prerequisites\":[\"\"],\"suggested_workup\":[{\"title\":\"\",\"trigger\":\"\",\"purpose\":\"\"}],\"treatment_pathways\":[{\"title\":\"\",\"trigger\":\"\",\"purpose\":\"\"}]}。不得在JSON结束前截断。",
@@ -75,7 +99,7 @@ export async function POST(request: Request) {
     ].join("\n\n");
     try {
       const result = parseClinicalReference(
-        await requestModel(baseUrl, apiKey, model, prompt, { maxOutputTokens: 5200, timeoutMs: 120000 }),
+        await requestModel(baseUrl, apiKey, model, prompt, { maxOutputTokens: 5200, timeoutMs: 120000, thinking: "disabled", jsonObject: true }),
         JSON.stringify({ facts, currentPurpose }),
       );
       return Response.json({ result, model }, { headers: { "Cache-Control": "no-store" } });

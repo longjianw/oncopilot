@@ -51,7 +51,7 @@ export async function POST(request: Request) {
       `当前草稿：${JSON.stringify(body.draft)}`,
       `医生确认项：${JSON.stringify(body.confirmations)}`,
     ].join("\n\n");
-    const candidate = parseModelJson(await requestModel(baseUrl, apiKey, model, prompt, { maxOutputTokens: 4200, timeoutMs: 90000 }));
+    const candidate = parseModelJson(await requestModel(baseUrl, apiKey, model, prompt, { maxOutputTokens: 4200, timeoutMs: 90000, thinking: "disabled", jsonObject: true }));
     if (!isValidAdmissionDraft(candidate)) throw new Error("重新合成结构不完整");
     const recomposed: AdmissionDraft = {
       ...candidate,

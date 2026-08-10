@@ -1,0 +1,74 @@
+{
+  "case_id": "A10",
+  "case_name": "已转入我院时外院建议转院不得成为现病史结尾，外院查体不得冒充本次查体",
+  "synthetic": true,
+  "source_text": "【完全合成外院资料】患者治疗后出现发热及血细胞减少，外院经处理后病情未见明显好转，建议转上级医院进一步诊治。外院转院前体温39.1℃、脉搏132次/分、血压92/58mmHg。患者后由外院转入我院，现为求进一步诊治收治入院。本次我院尚未提供实际专科查体。",
+  "current_purpose": "发热伴血细胞减少，进一步诊治",
+  "arrival_context": "外院转入我院",
+  "gold": {
+    "required_facts": [
+      { "field": "arrival_context", "value_contains": "外院转入我院", "encounter_scope": "current", "certainty": "explicit", "source_ids": ["S-ARRIVAL"] }
+    ],
+    "forbidden_draft_patterns": [
+      { "section": "specialist_exam", "patterns": ["39.1", "132次", "92/58", "未见异常", "正常"], "label": "P0_EXTERNAL_EXAM_AS_CURRENT" }
+    ],
+    "required_draft_order": [
+      { "section": "present_illness", "before": ["建议转上级医院", "建议转院"], "after": ["转入我院", "收治入院"], "label": "P0_EXTERNAL_REFERRAL_AS_CURRENT_ENDING" }
+    ],
+    "must_be_empty_sections": ["specialist_exam"],
+    "required_draft_text": [
+      { "section": "present_illness", "any": ["转入我院", "收治入院"] }
+    ]
+  },
+  "reference_output": {
+    "sources": [
+      { "source_id": "S1", "title": "完全合成外院资料", "evidence": "外院建议转院及转院前体征；随后转入我院" },
+      { "source_id": "S-ARRIVAL", "title": "本次到院关系", "evidence": "外院转入我院" }
+    ],
+    "facts": [
+      { "fact_id": "F1", "field": "current_status", "value": "外院治疗后病情未见明显好转，建议转上级医院进一步诊治", "event_time": "既往外院", "event_type": "current_status", "encounter_scope": "prior", "certainty": "explicit", "source_ids": ["S1"] },
+      { "fact_id": "F2", "field": "specialist_exam", "value": "外院转院前体温39.1℃、脉搏132次/分、血压92/58mmHg", "event_time": "转院前", "event_type": "specialist_exam", "encounter_scope": "prior", "certainty": "explicit", "source_ids": ["S1"] },
+      { "fact_id": "F3", "field": "arrival_context", "value": "外院转入我院", "event_time": "本次", "event_type": "current_status", "encounter_scope": "current", "certainty": "explicit", "source_ids": ["S-ARRIVAL"] }
+    ],
+    "draft": {
+      "chief_complaint": "治疗后发热伴血细胞减少，外院转入我院进一步诊治",
+      "present_illness": "患者治疗后出现发热及血细胞减少，外院经处理后病情未见明显好转，建议转上级医院进一步诊治。后由外院转入我院，现为求进一步诊治收治入院。外院转院前生命体征可供病情经过参考，本次我院专科查体待实际补充。",
+      "past_history": "",
+      "personal_history": "",
+      "family_history": "",
+      "allergy_history": "",
+      "specialist_exam": "",
+      "diagnosis_summary": "",
+      "plan_summary": "",
+      "pending_fields": ["本次我院专科查体：待实际补充"]
+    },
+    "review_items": []
+  },
+  "constructed_failure": {
+    "sources": [
+      { "source_id": "S1", "title": "完全合成外院资料", "evidence": "外院建议转院及转院前体征" },
+      { "source_id": "S-ARRIVAL", "title": "本次到院关系", "evidence": "外院转入我院" }
+    ],
+    "facts": [
+      { "fact_id": "F1", "field": "arrival_context", "value": "外院转入我院", "event_time": "本次", "event_type": "current_status", "encounter_scope": "current", "certainty": "explicit", "source_ids": ["S-ARRIVAL"] }
+    ],
+    "draft": {
+      "chief_complaint": "治疗后发热伴血细胞减少，进一步诊治",
+      "present_illness": "患者治疗后出现发热及血细胞减少，已转入我院收治。病情未见好转，建议转上级医院进一步诊治。",
+      "past_history": "",
+      "personal_history": "",
+      "family_history": "",
+      "allergy_history": "",
+      "specialist_exam": "体温39.1℃，脉搏132次/分，血压92/58mmHg。",
+      "diagnosis_summary": "",
+      "plan_summary": "",
+      "pending_fields": []
+    },
+    "review_items": []
+  },
+  "expected_failure_labels": [
+    "P0_EXTERNAL_REFERRAL_AS_CURRENT_ENDING",
+    "P0_EXTERNAL_EXAM_AS_CURRENT",
+    "UNSUPPORTED_SECTION_CONTENT:specialist_exam"
+  ]
+}

@@ -38,6 +38,19 @@ export function evaluateAdmissionCase(testCase, candidate) {
     if (includesAny(sectionText, rule.patterns)) errors.push(rule.label);
   }
 
+  for (const rule of testCase.gold.required_draft_order || []) {
+    const sectionText = String(candidate.draft?.[rule.section] || "");
+    const lastIndex = (patterns) => patterns.reduce((latest, pattern) => {
+      const matches = [...sectionText.matchAll(new RegExp(pattern, "gi"))];
+      return Math.max(latest, ...matches.map((match) => match.index ?? -1));
+    }, -1);
+    const beforeIndex = lastIndex(rule.before);
+    const afterIndex = lastIndex(rule.after);
+    if (beforeIndex < 0 || afterIndex < 0 || beforeIndex >= afterIndex) {
+      errors.push(rule.label);
+    }
+  }
+
   for (const section of testCase.gold.must_be_empty_sections || []) {
     if (String(candidate.draft?.[section] || "").trim()) errors.push(`UNSUPPORTED_SECTION_CONTENT:${section}`);
   }

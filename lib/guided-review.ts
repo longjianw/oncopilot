@@ -201,6 +201,7 @@ export function buildGuidedDraft(extraction: FactExtraction, evidenceDraft: Admi
   const evidenceText = [extraction.current_purpose, ...extraction.facts.map((fact) => fact.value)].filter(Boolean).join(" ");
   const melanoma = /黑色素瘤|melanoma/i.test(evidenceText);
   const hasType = (type: string) => extraction.facts.some((fact) => fact.event_type === type);
+  const hasCurrentType = (type: string) => extraction.facts.some((fact) => fact.event_type === type && fact.encounter_scope === "current");
   const lowInformation = extraction.facts.length <= 8 && evidenceDraft.present_illness.trim().length < 120;
   let presentIllness = evidenceDraft.present_illness;
 
@@ -222,7 +223,7 @@ export function buildGuidedDraft(extraction: FactExtraction, evidenceDraft: Admi
     personal_history: hasType("personal_history") ? evidenceDraft.personal_history : "【待选择：吸烟、饮酒、职业或长期暴露】",
     family_history: hasType("family_history") ? evidenceDraft.family_history : "【待选择：肿瘤及遗传相关疾病家族史】",
     allergy_history: hasType("allergy_history") ? evidenceDraft.allergy_history : "【待选择：药物、食物及其他过敏史】",
-    specialist_exam: hasType("specialist_exam") ? evidenceDraft.specialist_exam : melanoma
+    specialist_exam: hasCurrentType("specialist_exam") ? evidenceDraft.specialist_exam : melanoma
       ? "【待查体，以下按实际所见填写】\nECOG PS评分【】分；存在疼痛时NRS评分【】分。\n【原发灶/术区具体部位】可见【色泽及形态】病灶/瘢痕，大小约【】cm×【】cm，边界【清晰/欠清】，表面【有/无】破溃、渗液或出血，与周围组织【有/无】粘连，周围皮肤【实际所见】。\n双侧颈部、腋窝及腹股沟浅表淋巴结【未触及明显肿大/于具体区域触及】；如有异常，记录侧别、数量、大小、质地、活动度及压痛。"
       : "【待查体：与当前肿瘤相关的原发部位、术区及区域淋巴结、ECOG PS；存在疼痛时评估NRS】",
   };
