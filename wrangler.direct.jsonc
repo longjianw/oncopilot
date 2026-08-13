@@ -1,0 +1,35 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "oncopilot-direct",
+  "main": "dist/server/index.js",
+  "compatibility_date": "2026-05-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": true,
+  "routes": [
+    {
+      "pattern": "oncopilot.rtflowai.top",
+      "custom_domain": true
+    }
+  ],
+  "no_bundle": true,
+  "rules": [
+    {
+      "type": "ESModule",
+      "globs": ["**/*.js", "**/*.mjs"]
+    }
+  ],
+  "assets": {
+    "directory": "dist/client",
+    "binding": "ASSETS"
+  },
+  "vars": {
+    "ARK_CODING_MODEL": "deepseek-v4-pro",
+    "ARK_REFERENCE_MODEL": "deepseek-v4-pro",
+    "ARK_CODING_BASE_URL": "https://ark.cn-beijing.volces.com/api/coding/v3",
+    "ARK_VISION_MODEL": "doubao-seed-2.1-turbo"
+  },
+  "observability": {
+    "enabled": true
+  }
+}

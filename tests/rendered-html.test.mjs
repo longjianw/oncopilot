@@ -951,8 +951,9 @@ test("renders the single-entry admission draft package workflow", async () => {
   assert.match(html, /HEIC 会先在本机转换/);
   assert.match(html, /最多/);
   assert.match(html, /PDF 最多/);
-  assert.match(html, /本地规则只约束草稿结构/);
-  assert.match(html, /不替代本院模板和上级审核/);
+  assert.match(html, /可使用已取得必要授权并完成身份字段去标识化的真实临床资料/);
+  assert.match(html, /资料会发送给第三方模型处理/);
+  assert.match(html, /输出仍需医生结合原始资料审核/);
   assert.match(html, /本次来院目的/);
   assert.match(html, /生成入院记录草稿包/);
   assert.match(html, /先整理已知事实/);
