@@ -3,11 +3,11 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://oncopilot-safety-workbench.lisao.chatgpt.site"),
-  title: "OncoPilot · 肿瘤入院记录草稿助手",
-  description: "资料再少也先生成安全骨架，通过选择、填空和AI重新合成补全肿瘤入院记录草稿。",
+  title: "OncoPilot V0.11 · 肿瘤入院记录草稿助手",
+  description: "先建立临床事件账本，再分阶段生成病史、诊断与下一步参考的肿瘤入院记录草稿助手。",
   openGraph: {
-    title: "OncoPilot · 肿瘤入院记录草稿助手",
-    description: "把从零默写改成选择填空后微调：已知事实、疾病相关候选项、AI重新合成和可编辑入院记录草稿。",
+    title: "OncoPilot V0.11 · 肿瘤入院记录草稿助手",
+    description: "临床事件账本、分阶段模型生成和可编辑草稿，让长病程肿瘤入院记录更容易核对。",
     images: ["/og-choice-fill-chat.png"],
   },
 };
