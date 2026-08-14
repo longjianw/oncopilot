@@ -87,6 +87,27 @@ const parseExecutive = (value: unknown): BoardDecision => {
   return { decision, rationale, disagreements, nextSprint, stopConditions };
 };
 
+type MeetingSummary = {
+  arm_a: { score: number; latency_seconds: number };
+  arm_b: { score: number; latency_seconds: number };
+};
+
+const metricPattern = (arm: "A" | "B", value: number, unit: "分" | "秒") => {
+  const escaped = String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?:回答)?${arm}(?:组|臂|方案|版本)?[^。；，,\\n]{0,20}${escaped}\\s*${unit}`, "i");
+};
+
+const validateRoleMetrics = (review: BoardRoleReview, summary: MeetingSummary) => {
+  const text = `${review.headline}\n${review.evidence.join("\n")}\n${review.recommendation}\n${review.concern}`;
+  const swappedScore = summary.arm_a.score !== summary.arm_b.score && (
+    metricPattern("A", summary.arm_b.score, "分").test(text) || metricPattern("B", summary.arm_a.score, "分").test(text)
+  );
+  const swappedLatency = summary.arm_a.latency_seconds !== summary.arm_b.latency_seconds && (
+    metricPattern("A", summary.arm_b.latency_seconds, "秒").test(text) || metricPattern("B", summary.arm_a.latency_seconds, "秒").test(text)
+  );
+  if (swappedScore || swappedLatency) throw new Error("角色意见把A/B的总分或耗时归属写反");
+};
+
 const buildMeetingContext = (body: IncomingBody) => {
   const caseLabel = boundedText(body.case_label, 80) || "未命名试评";
   const track = body.track === "end_to_end" ? "端到端资料处理" : "统一事件账本后的生成质量";
@@ -107,7 +128,7 @@ const buildMeetingContext = (body: IncomingBody) => {
   return { armA, armB, summary };
 };
 
-const generateRoleReview = async (baseUrl: string, apiKey: string, model: string, summary: unknown, role: typeof roleDefinitions[number]) => {
+const generateRoleReview = async (baseUrl: string, apiKey: string, model: string, summary: MeetingSummary, role: typeof roleDefinitions[number]) => {
   const prompt = [
     `你是OncoPilot内部产品评审会的${role.label}。`,
     role.mandate,
@@ -116,8 +137,17 @@ const generateRoleReview = async (baseUrl: string, apiKey: string, model: string
     "只返回JSON：{\"headline\":\"\",\"evidence\":[\"\",\"\"],\"recommendation\":\"\",\"concern\":\"\"}",
     `盲评汇总：${JSON.stringify(summary)}`,
   ].join("\n\n");
-  const raw = await requestModel(baseUrl, apiKey, model, prompt, { maxOutputTokens: 1800, timeoutMs: 120000, thinking: "disabled", jsonObject: true });
-  return parseRoleReview(parseModelJson(raw), role);
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const retry = attempt === 0 ? "" : `\n\n上一版把A/B数字归属写反或结构不完整，未通过门禁。权威数据为：A总分${summary.arm_a.score}分、耗时${summary.arm_a.latency_seconds}秒；B总分${summary.arm_b.score}分、耗时${summary.arm_b.latency_seconds}秒。请完整重写并逐项核对。`;
+      const raw = await requestModel(baseUrl, apiKey, model, prompt + retry, { maxOutputTokens: 1800, timeoutMs: 120000, thinking: "disabled", jsonObject: true });
+      const review = parseRoleReview(parseModelJson(raw), role);
+      validateRoleMetrics(review, summary);
+      return review;
+    } catch (error) { lastError = error; }
+  }
+  throw lastError instanceof Error ? lastError : new Error(`${role.label}意见未通过数字归属门禁`);
 };
 
 const generateExecutive = async (baseUrl: string, apiKey: string, model: string, summary: unknown, reviews: BoardRoleReview[], hasP0: boolean) => {

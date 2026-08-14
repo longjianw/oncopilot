@@ -115,3 +115,31 @@ test("GPT-5.6 Sol baseline is blind, high-reasoning, and not stored", async () =
     globalThis.fetch = originalFetch;
   }
 });
+
+test("evaluation role retries when A/B score or latency attribution is reversed", async () => {
+  const worker = await workerFor("metric-gate");
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    const output = calls === 1
+      ? { headline: "A整体更稳。", evidence: ["A方案10秒。", "B方案30秒。"], recommendation: "继续核对。", concern: "样本较少。" }
+      : { headline: "A整体更稳。", evidence: ["A方案75分、耗时30秒。", "B方案50分、耗时10秒。"], recommendation: "继续核对。", concern: "样本较少。" };
+    return new Response(JSON.stringify({ output_text: JSON.stringify(output) }), { status: 200 });
+  };
+  const scoresA = Object.fromEntries(["event_coverage", "chronology", "encounter_separation", "unsupported_claims", "uncertainty_preservation", "section_placement", "diagnosis_evidence", "priority_quality", "actionability", "edit_cost"].map((id) => [id, 3]));
+  const scoresB = Object.fromEntries(Object.keys(scoresA).map((id) => [id, 2]));
+  try {
+    const response = await worker.fetch(new Request("http://localhost/api/evaluation-board", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ mode: "role", role_id: "user_research", case_label: "合成数字门禁", arm_a: { scores: scoresA, latencySeconds: 30, reviewerNote: "合成A" }, arm_b: { scores: scoresB, latencySeconds: 10, reviewerNote: "合成B" } }),
+    }), environment, context);
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(calls, 2);
+    assert.match(payload.result.review.evidence.join(" "), /A方案75分、耗时30秒/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
