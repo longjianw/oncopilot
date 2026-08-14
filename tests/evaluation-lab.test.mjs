@@ -1,0 +1,72 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+const workerFor = async (suffix) => {
+  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
+  workerUrl.searchParams.set("evaluation-lab-test", `${suffix}-${process.pid}-${Date.now()}`);
+  return (await import(workerUrl.href)).default;
+};
+
+const environment = {
+  ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) },
+  ARK_CODING_API_KEY: "synthetic-test-key",
+  ARK_CODING_MODEL: "deepseek-v4-pro",
+  ARK_REFERENCE_MODEL: "deepseek-v4-pro",
+  ARK_CODING_BASE_URL: "https://synthetic.example/v3",
+};
+
+const context = { waitUntil() {}, passThroughOnException() {} };
+
+test("evaluation lab renders the blinded workflow and same-model boundary", async () => {
+  const worker = await workerFor("render");
+  const response = await worker.fetch(new Request("http://localhost/evaluation-lab", { headers: { accept: "text/html" } }), environment, context);
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  assert.match(html, /内部测评实验室/);
+  assert.match(html, /随机分配并开始盲评/);
+  assert.match(html, /同一模型多视角/);
+  assert.match(html, /不能称为临床准确率/);
+  assert.doesNotMatch(html, /2刘三元|强哥的病人/);
+});
+test("evaluation board uses four isolated reviews and one executive synthesis without raw outputs", async () => {
+  const worker = await workerFor("board");
+  const originalFetch = globalThis.fetch;
+  const prompts = [];
+  globalThis.fetch = async (_url, init) => {
+    const requestBody = JSON.parse(init.body);
+    assert.equal(requestBody.model, "deepseek-v4-pro");
+    prompts.push(requestBody.input);
+    const isExecutive = requestBody.input.includes("执行负责人");
+    const output = isExecutive
+      ? { decision: "继续小样本试评，优先修复忠实度问题。", rationale: ["回答A总分较高", "回答B出现P0硬失败"], disagreements: ["速度优势是否足以抵消修改成本仍未解决"], next_sprint: ["补充三个合成长病程病例", "复核评分者一致性"], stop_conditions: ["再次出现无依据分期即停止扩大试用"] }
+      : { headline: "先解决无依据断言。", evidence: ["回答A得分高于回答B", "回答B有1个P0错误"], recommendation: "下一轮只验证忠实度门禁是否稳定。", concern: "单病例不能代表总体效果。" };
+    return new Response(JSON.stringify({ output_text: JSON.stringify(output) }), { status: 200 });
+  };
+
+  const perfectScores = Object.fromEntries(["event_coverage", "chronology", "encounter_separation", "unsupported_claims", "uncertainty_preservation", "section_placement", "diagnosis_evidence", "priority_quality", "actionability", "edit_cost"].map((id) => [id, 4]));
+  const weakScores = Object.fromEntries(Object.keys(perfectScores).map((id) => [id, 1]));
+  try {
+    const response = await worker.fetch(new Request("http://localhost/api/evaluation-board", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        case_label: "完全合成试评",
+        track: "generation_only",
+        arm_a: { scores: perfectScores, p0Count: 0, p1Count: 1, latencySeconds: 80, retryCount: 0, reviewerNote: "时间线完整。", output: "这段完整回答不应发送给公司会议。" },
+        arm_b: { scores: weakScores, p0Count: 1, p1Count: 3, latencySeconds: 12, retryCount: 2, reviewerNote: "存在无依据分期。", output: "另一段原始回答也不应发送。" },
+      }),
+    }), environment, context);
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.result.reviews.length, 4);
+    assert.equal(payload.result.sameModelReview, true);
+    assert.equal(payload.result.model, "deepseek-v4-pro");
+    assert.equal(prompts.length, 5);
+    assert.equal(prompts.filter((prompt) => prompt.includes("同一高能力模型在隔离上下文")).length, 4);
+    assert.match(prompts.at(-1), /独立角色意见/);
+    assert.ok(prompts.every((prompt) => !prompt.includes("这段完整回答不应发送")));
+    assert.ok(prompts.every((prompt) => !prompt.includes("另一段原始回答也不应发送")));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
