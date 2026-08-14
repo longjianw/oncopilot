@@ -121,13 +121,28 @@ export async function POST(request: Request) {
     const executivePrompt = [
       "你是OncoPilot内部评审会的执行负责人。四个角色已经独立审阅同一份盲评汇总。",
       "你的任务不是追求表面共识，而是明确：这一轮是否足以支持产品迭代、最优先改什么、哪些分歧尚未解决、下一轮如何验证、出现什么情况必须停止发布或扩大试用。",
-      "两个病例或单次试评只能称为小样本试评，不能称临床准确率。若角色意见冲突，必须原样保留冲突；若证据不足，决策应是继续测评而非强行选边。",
+      "两个病例或单次试评只能称为小样本试评，不能称临床准确率。若角色意见冲突，必须原样保留冲突；若证据不足，决策应是继续测评而非强行选边。只要任一臂出现P0，第一优先级必须是停止扩大试用、复现并修复P0，不能把增加样本排在P0修复之前。",
       "只返回JSON：{\"decision\":\"\",\"rationale\":[\"\",\"\"],\"disagreements\":[\"\"],\"next_sprint\":[\"\",\"\"],\"stop_conditions\":[\"\"]}",
       `盲评汇总：${JSON.stringify(summary)}`,
       `独立角色意见：${JSON.stringify(reviews)}`,
     ].join("\n\n");
-    const executiveRaw = await requestModel(baseUrl, apiKey, model, executivePrompt, { maxOutputTokens: 2400, timeoutMs: 120000, thinking: "disabled", jsonObject: true });
-    const executive = parseExecutive(parseModelJson(executiveRaw));
+    let executive: BoardDecision | null = null;
+    let executiveError: unknown;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const retry = attempt === 0 ? "" : "\n\n上一版把扩大样本放在P0修复之前，未通过负责人质量门禁。请在decision和next_sprint第一项中明确：停止扩大试用，先复现并修复P0；修复后才增加样本。";
+        const executiveRaw = await requestModel(baseUrl, apiKey, model, executivePrompt + retry, { maxOutputTokens: 2400, timeoutMs: 120000, thinking: "disabled", jsonObject: true });
+        const candidate = parseExecutive(parseModelJson(executiveRaw));
+        const hasP0 = armA.p0Count + armB.p0Count > 0;
+        const priorityText = `${candidate.decision} ${candidate.nextSprint[0] || ""}`;
+        if (hasP0 && !/(?:P0|硬失败|致命|停止.{0,12}(?:试用|发布|扩大)|修复.{0,12}P0)/i.test(priorityText)) {
+          throw new Error("负责人未把P0修复置于首位");
+        }
+        executive = candidate;
+        break;
+      } catch (error) { executiveError = error; }
+    }
+    if (!executive) throw executiveError instanceof Error ? executiveError : new Error("负责人结论未通过质量门禁");
 
     return Response.json({
       result: {

@@ -32,13 +32,16 @@ test("evaluation board uses four isolated reviews and one executive synthesis wi
   const worker = await workerFor("board");
   const originalFetch = globalThis.fetch;
   const prompts = [];
+  let executiveCalls = 0;
   globalThis.fetch = async (_url, init) => {
     const requestBody = JSON.parse(init.body);
     assert.equal(requestBody.model, "deepseek-v4-pro");
     prompts.push(requestBody.input);
     const isExecutive = requestBody.input.includes("执行负责人");
     const output = isExecutive
-      ? { decision: "继续小样本试评，优先修复忠实度问题。", rationale: ["回答A总分较高", "回答B出现P0硬失败"], disagreements: ["速度优势是否足以抵消修改成本仍未解决"], next_sprint: ["补充三个合成长病程病例", "复核评分者一致性"], stop_conditions: ["再次出现无依据分期即停止扩大试用"] }
+      ? ++executiveCalls === 1
+        ? { decision: "继续扩大样本。", rationale: ["回答A总分较高", "回答B出现P0硬失败"], disagreements: ["速度优势是否足以抵消修改成本仍未解决"], next_sprint: ["补充三个合成长病程病例", "再考虑修复问题"], stop_conditions: ["再次出现无依据分期即停止扩大试用"] }
+        : { decision: "回答B出现P0，停止扩大试用并先修复。", rationale: ["回答A总分较高", "回答B出现P0硬失败"], disagreements: ["速度优势是否足以抵消修改成本仍未解决"], next_sprint: ["先复现并修复P0错误", "修复后补充三个合成长病程病例"], stop_conditions: ["再次出现无依据分期即停止扩大试用"] }
       : { headline: "先解决无依据断言。", evidence: ["回答A得分高于回答B", "回答B有1个P0错误"], recommendation: "下一轮只验证忠实度门禁是否稳定。", concern: "单病例不能代表总体效果。" };
     return new Response(JSON.stringify({ output_text: JSON.stringify(output) }), { status: 200 });
   };
@@ -61,9 +64,10 @@ test("evaluation board uses four isolated reviews and one executive synthesis wi
     assert.equal(payload.result.reviews.length, 4);
     assert.equal(payload.result.sameModelReview, true);
     assert.equal(payload.result.model, "deepseek-v4-pro");
-    assert.equal(prompts.length, 5);
+    assert.equal(prompts.length, 6);
     assert.equal(prompts.filter((prompt) => prompt.includes("同一高能力模型在隔离上下文")).length, 4);
     assert.match(prompts.at(-1), /独立角色意见/);
+    assert.match(prompts.at(-1), /P0修复之前/);
     assert.ok(prompts.every((prompt) => !prompt.includes("这段完整回答不应发送")));
     assert.ok(prompts.every((prompt) => !prompt.includes("另一段原始回答也不应发送")));
   } finally {
