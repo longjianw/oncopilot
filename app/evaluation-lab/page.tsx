@@ -9,6 +9,7 @@ import {
   scoreGuide,
   winnerLabel,
   type BoardRoleReview,
+  type BoardRoleId,
   type EvaluationArm,
   type EvaluationBoardResult,
   type EvaluationDimensionId,
@@ -30,8 +31,16 @@ const STORAGE_KEY = "oncopilot-evaluation-lab-v1";
 
 const sourceLabels: Record<SourceId, string> = {
   oncopilot: "OncoPilot · V4 Pro",
-  baseline: "ChatGPT 文本基线",
+  baseline: "GPT-5.6 Sol 文本基线",
 };
+
+const meetingRoles: Array<{ id: BoardRoleId; label: string; focus: string }> = [
+  { id: "product", label: "产品经理小龙虾", focus: "首印象与编辑负担" },
+  { id: "user_research", label: "市场与用户研究小龙虾", focus: "继续使用或放弃的原因" },
+  { id: "engineering", label: "技术负责人小龙虾", focus: "模型、门禁与失败根因" },
+  { id: "clinical_quality", label: "临床质量小龙虾", focus: "记录忠实度与安全风险" },
+  { id: "evaluation", label: "测评师小龙虾", focus: "盲法、证据与可复现性" },
+];
 
 const syntheticOncoPilot = `主诉：发现右肺占位2月，完成一线治疗后复查提示进展1周。
 
@@ -40,6 +49,13 @@ const syntheticOncoPilot = `主诉：发现右肺占位2月，完成一线治疗
 const syntheticBaseline = `主诉：肺癌治疗后进展1周。
 
 现病史：患者2月前确诊右肺癌，已接受一线化疗。近期复查提示肺癌进展并出现转移，现为调整二线方案收入院。患者一般情况尚可，无明显不适。`;
+
+const syntheticEvaluationInput = `临床事件账本：
+1. 2月前：因咳嗽发现右肺占位；病理仅支持恶性肿瘤，具体分型待核对。
+2. 1月前：开始一线全身治疗；方案和疗效评价标准未提供。
+3. 1周前：复查影像提示病灶较前增大；未提供远处转移依据。
+4. 背景史：高血压5年，具体用药待核对。
+5. 本次目的：进一步评估近期影像变化。`;
 
 const cloneWithoutOutput = (arm: EvaluationArm): Omit<EvaluationArm, "output"> => ({
   scores: { ...arm.scores },
@@ -70,9 +86,13 @@ export default function EvaluationLabPage() {
   const [oncopilotOutput, setOncopilotOutput] = useState("");
   const [baselineOutput, setBaselineOutput] = useState("");
   const [baselineLabel, setBaselineLabel] = useState("GPT-5.6 Sol · 手动导入");
+  const [evaluationInput, setEvaluationInput] = useState("");
+  const [baselineLoading, setBaselineLoading] = useState(false);
+  const [baselineError, setBaselineError] = useState("");
   const [assignment, setAssignment] = useState<Assignment | null>(null);
   const [revealed, setRevealed] = useState(false);
   const [boardResult, setBoardResult] = useState<EvaluationBoardResult | null>(null);
+  const [meetingReviews, setMeetingReviews] = useState<BoardRoleReview[]>([]);
   const [boardLoading, setBoardLoading] = useState(false);
   const [boardError, setBoardError] = useState("");
   const [storageReady, setStorageReady] = useState(false);
@@ -116,10 +136,12 @@ export default function EvaluationLabPage() {
   const winner = winnerLabel(scoreA, scoreB);
   const ratingCount = Object.keys(ratedDimensions).length;
   const boardReady = ratingCount === evaluationDimensions.length * 2 && Boolean(session.armA.reviewerNote.trim()) && Boolean(session.armB.reviewerNote.trim());
+  const boardStarted = boardLoading || meetingReviews.length > 0 || Boolean(boardResult);
 
   const updateArm = (arm: "armA" | "armB", patch: Partial<EvaluationArm>) => {
     setSession((current) => ({ ...current, [arm]: { ...current[arm], ...patch } }));
     setBoardResult(null);
+    setMeetingReviews([]);
   };
 
   const updateScore = (arm: "armA" | "armB", id: EvaluationDimensionId, value: number) => {
@@ -134,6 +156,7 @@ export default function EvaluationLabPage() {
     setAssignment(nextAssignment);
     setRevealed(false);
     setBoardResult(null);
+    setMeetingReviews([]);
     setRatedDimensions({});
     setSession((current) => ({
       ...current,
@@ -147,9 +170,12 @@ export default function EvaluationLabPage() {
     setSession((current) => ({ ...emptyEvaluationSession(), evaluator: current.evaluator, goldSummary: "合成事实：右肺占位2月；病理仅明确恶性，分型缺失；1月前开始一线全身治疗，方案缺失；1周前影像提示病灶增大；高血压5年；本次目的为进一步评估。" }));
     setOncopilotOutput(syntheticOncoPilot);
     setBaselineOutput(syntheticBaseline);
+    setEvaluationInput(syntheticEvaluationInput);
+    setBaselineLabel("GPT-5.6 Sol · 合成示例");
     setAssignment(null);
     setRevealed(false);
     setBoardResult(null);
+    setMeetingReviews([]);
     setRatedDimensions({});
   };
 
@@ -157,12 +183,38 @@ export default function EvaluationLabPage() {
     setSession(emptyEvaluationSession());
     setOncopilotOutput("");
     setBaselineOutput("");
+    setEvaluationInput("");
+    setBaselineLabel("GPT-5.6 Sol · 手动导入");
+    setBaselineError("");
     setAssignment(null);
     setRevealed(false);
     setBoardResult(null);
+    setMeetingReviews([]);
     setBoardError("");
     setRatedDimensions({});
     window.localStorage.removeItem(STORAGE_KEY);
+  };
+
+  const generateBaseline = async () => {
+    if (!evaluationInput.trim()) {
+      setBaselineError("请先填写本轮统一输入；生成质量轨道填事件账本，端到端轨道填源资料。");
+      return;
+    }
+    setBaselineLoading(true);
+    setBaselineError("");
+    try {
+      const response = await fetch("/api/evaluation-baseline", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ evaluation_input: evaluationInput, track: session.track }),
+      });
+      const payload = await response.json() as { result?: string; model?: string; elapsedSeconds?: number; error?: string };
+      if (!response.ok || !payload.result) throw new Error(payload.error || "自动对照暂时失败。");
+      setBaselineOutput(payload.result);
+      setBaselineLabel(`${payload.model || "gpt-5.6-sol"} · 自动生成 · ${payload.elapsedSeconds || 0}秒`);
+    } catch (error) {
+      setBaselineError(error instanceof Error ? error.message : "自动对照暂时失败。");
+    } finally { setBaselineLoading(false); }
   };
 
   const runBoard = async () => {
@@ -173,15 +225,29 @@ export default function EvaluationLabPage() {
     setBoardLoading(true);
     setBoardError("");
     setBoardResult(null);
+    setMeetingReviews([]);
     try {
-      const response = await fetch("/api/evaluation-board", {
+      const startedAt = performance.now();
+      const basePayload = { case_label: session.caseLabel, track: session.track, arm_a: { ...session.armA, output: "" }, arm_b: { ...session.armB, output: "" } };
+      const reviews = await Promise.all(meetingRoles.map(async (role) => {
+        const response = await fetch("/api/evaluation-board", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...basePayload, mode: "role", role_id: role.id }),
+        });
+        const payload = await response.json() as { result?: { review?: BoardRoleReview; model?: string }; error?: string };
+        if (!response.ok || !payload.result?.review) throw new Error(payload.error || `${role.label}暂时没有完成发言。`);
+        setMeetingReviews((current) => [...current.filter((item) => item.role !== role.id), payload.result!.review!]);
+        return payload.result.review;
+      }));
+      const executiveResponse = await fetch("/api/evaluation-board", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ case_label: session.caseLabel, track: session.track, arm_a: { ...session.armA, output: "" }, arm_b: { ...session.armB, output: "" } }),
+        body: JSON.stringify({ ...basePayload, mode: "executive", reviews }),
       });
-      const payload = await response.json() as { result?: EvaluationBoardResult; error?: string };
-      if (!response.ok || !payload.result) throw new Error(payload.error || "内部评审会暂时失败。");
-      setBoardResult(payload.result);
+      const executivePayload = await executiveResponse.json() as { result?: { executive?: EvaluationBoardResult["executive"]; model?: string }; error?: string };
+      if (!executiveResponse.ok || !executivePayload.result?.executive) throw new Error(executivePayload.error || "CEO汇总暂时失败。");
+      setBoardResult({ reviews, executive: executivePayload.result.executive, model: executivePayload.result.model || "deepseek-v4-pro", elapsedSeconds: Math.round((performance.now() - startedAt) / 100) / 10, sameModelReview: true });
       setRevealed(true);
     } catch (error) {
       setBoardError(error instanceof Error ? error.message : "内部评审会暂时失败。");
@@ -212,11 +278,11 @@ export default function EvaluationLabPage() {
   return <main className={styles.shell}>
     <header className={styles.header}>
       <a href="/" className={styles.brand}><span>OP</span><div><strong>OncoPilot</strong><small>内部测评实验室</small></div></a>
-      <div><span className={styles.version}>V0.12.1</span><a href="/">返回病历助手</a></div>
+      <div><span className={styles.version}>V0.13.0</span><a href="/">返回病历助手</a></div>
     </header>
 
     <section className={styles.hero}>
-      <div><span className={styles.eyebrow}>EVALUATION LAB · PILOT</span><h1>先知道哪里不够好，<br />再决定下一版改什么。</h1><p>同一病例、盲化 A/B、统一评分，再由同一模型多视角的内部评审会，把质量、速度和产品取舍变成下一轮行动。</p></div>
+      <div><span className={styles.eyebrow}>EVALUATION LAB · PILOT</span><h1>先知道哪里不够好，<br />再决定下一版改什么。</h1><p>同一病例、盲化 A/B、统一评分；同一模型多视角下，产品经理、市场与用户研究、技术、临床质量、测评师五只小龙虾独立发言，最后由 CEO 小龙虾汇总。</p></div>
       <aside><strong>当前实验边界</strong><p>病例原文和两组完整回答只停留在当前页面；“公司会议”只接收分数、错误数、耗时和简短评语。</p><small>两例试评只能验证流程与发现问题，不能称为临床准确率。</small></aside>
     </section>
 
@@ -234,7 +300,12 @@ export default function EvaluationLabPage() {
 
     <section className={styles.card}>
       <div className={styles.cardHeading}><div><span>02 · 双路回答</span><h2>收齐两份结果，再随机分配 A/B</h2></div><a href="https://developers.openai.com/api/docs/models/gpt-5.6-sol" target="_blank" rel="noreferrer">GPT‑5.6 Sol 官方说明 ↗</a></div>
-      <div className={styles.modelNote}><div><b>OncoPilot 组</b><span>当前正式流程 · DeepSeek V4 Pro</span></div><i /><div><b>文本基线组</b><input value={baselineLabel} maxLength={80} onChange={(event) => setBaselineLabel(event.target.value)} /></div><p>Sora 是视频模型；这一处只接受文本模型回答。当前先手动导入，后续配置 OpenAI API 后再自动调用。</p></div>
+      <div className={styles.modelNote}><div><b>OncoPilot 组</b><span>当前正式流程 · DeepSeek V4 Pro</span></div><i /><div><b>文本基线组</b><input value={baselineLabel} maxLength={100} onChange={(event) => setBaselineLabel(event.target.value)} /></div><p>自动基线使用 GPT-5.6 Sol 高推理强度；也保留手动导入，便于比较不同外部模型。</p></div>
+      <div className={styles.baselineInput}>
+        <label><span>{session.track === "generation_only" ? "本轮统一临床事件账本" : "本轮端到端源资料"}</span><textarea value={evaluationInput} maxLength={100000} onChange={(event) => setEvaluationInput(event.target.value)} placeholder={session.track === "generation_only" ? "粘贴同一份、已人工确认的临床事件账本" : "粘贴本轮去标识化源资料"} /><small>只在点击自动生成时发送给对照模型；不会与 OncoPilot 回答或人工金标准一起发送，也不写入本机草稿。</small></label>
+        <button type="button" disabled={baselineLoading || evaluationInput.trim().length < 20} onClick={generateBaseline}>{baselineLoading ? "GPT-5.6 Sol 正在生成，可能需要1–4分钟…" : "用 GPT-5.6 Sol 自动生成对照"}</button>
+      </div>
+      {baselineError && <p className={styles.error}>{baselineError}</p>}
       <div className={styles.outputGrid}>
         <label><span>OncoPilot 完整回答</span><textarea value={oncopilotOutput} onChange={(event) => setOncopilotOutput(event.target.value)} placeholder="粘贴 OncoPilot 本次完整结果" /></label>
         <label><span>ChatGPT / 对照模型完整回答</span><textarea value={baselineOutput} onChange={(event) => setBaselineOutput(event.target.value)} placeholder="粘贴同一输入条件下的对照答案" /></label>
@@ -255,18 +326,22 @@ export default function EvaluationLabPage() {
       <div className={styles.errorGrid}>{(["armA", "armB"] as const).map((arm, index) => <section key={arm}><h3>回答 {index === 0 ? "A" : "B"} · 错误与效率</h3><div><label><span>P0 致命错误</span><input type="number" min="0" max="99" value={session[arm].p0Count} onChange={(event) => updateArm(arm, { p0Count: Number(event.target.value) })} /></label><label><span>P1 重要错误</span><input type="number" min="0" max="99" value={session[arm].p1Count} onChange={(event) => updateArm(arm, { p1Count: Number(event.target.value) })} /></label><label><span>耗时（秒）</span><input type="number" min="0" max="3600" value={session[arm].latencySeconds} onChange={(event) => updateArm(arm, { latencySeconds: Number(event.target.value) })} /></label><label><span>重试次数</span><input type="number" min="0" max="20" value={session[arm].retryCount} onChange={(event) => updateArm(arm, { retryCount: Number(event.target.value) })} /></label></div><label><span>评审摘要（只写错误类型与修改成本）</span><textarea maxLength={1200} value={session[arm].reviewerNote} onChange={(event) => updateArm(arm, { reviewerNote: event.target.value })} placeholder="例如：漏掉二线治疗；把外院建议转院写成当前计划；修改约需8分钟。" /></label></section>)}</div>
       <div className={styles.scoreSummary}><article><span>回答 A</span><strong>{scoreA.score}</strong><small>/ 100 {scoreA.hardFail ? "· P0 硬失败" : ""}</small></article><article><span>回答 B</span><strong>{scoreB.score}</strong><small>/ 100 {scoreB.hardFail ? "· P0 硬失败" : ""}</small></article><div><span>当前盲评结果</span><h3>{winner === "接近" ? "A / B 暂无明确优势" : `回答 ${winner} 暂时领先`}</h3><p>P0 优先于总分；差距小于 1 分视为接近。</p></div></div>
       <p className={styles.ratingProgress}>已完成 {ratingCount}/{evaluationDimensions.length * 2} 项评分 · 两组评审摘要均填写后才可开会</p>
-      <div className={styles.actions}><button type="button" disabled={ratingCount < evaluationDimensions.length * 2} onClick={() => setRevealed(true)}>{revealed ? "身份已经揭盲" : "完成评分并揭盲"}</button><button type="button" className={styles.primaryInline} disabled={boardLoading || !boardReady} onClick={runBoard}>{boardLoading ? "四个角色独立审阅后正在汇总…" : "召开内部产品评审会"}</button></div>
+      <div className={styles.actions}><button type="button" disabled={ratingCount < evaluationDimensions.length * 2} onClick={() => setRevealed(true)}>{revealed ? "身份已经揭盲" : "完成评分并揭盲"}</button><button type="button" className={styles.primaryInline} disabled={boardLoading || !boardReady} onClick={runBoard}>{boardLoading ? `${meetingReviews.length}/5 只小龙虾已发言…` : "召开 AI 公司评审会"}</button></div>
       {boardError && <p className={styles.error}>{boardError}</p>}
     </section>}
 
-    {boardResult && <section className={`${styles.card} ${styles.board}`}>
-      <div className={styles.cardHeading}><div><span>04 · 内部公司会议</span><h2>先独立审阅，再保留分歧</h2></div><span className={styles.sameModel}>同一模型多视角 · {boardResult.model} · {boardResult.elapsedSeconds}秒</span></div>
-      <p className={styles.boardBoundary}>这不是四位真实专家会诊：四个角色使用同一模型、隔离上下文独立分析评分汇总，最后由第五次模型调用做决策汇总。</p>
-      <div className={styles.roleGrid}>{boardResult.reviews.map((review) => <RoleCard key={review.role} review={review} />)}</div>
-      <article className={styles.executive}><span>执行负责人结论</span><h2>{boardResult.executive.decision}</h2><div><section><h3>为什么</h3><ul>{boardResult.executive.rationale.map((item) => <li key={item}>{item}</li>)}</ul></section><section><h3>尚未解决的分歧</h3><ul>{boardResult.executive.disagreements.length ? boardResult.executive.disagreements.map((item) => <li key={item}>{item}</li>) : <li>本轮未识别到明确分歧，仍需用下一病例复核稳定性。</li>}</ul></section><section><h3>下一轮只做这些</h3><ol>{boardResult.executive.nextSprint.map((item) => <li key={item}>{item}</li>)}</ol></section><section><h3>停止扩大试用条件</h3><ul>{boardResult.executive.stopConditions.map((item) => <li key={item}>{item}</li>)}</ul></section></div></article>
-      <div className={styles.actions}><button type="button" onClick={exportResult}>导出本次 JSON 记录</button><button type="button" onClick={reset}>开始新的试评</button></div>
+    {boardStarted && <section className={`${styles.card} ${styles.board}`}>
+      <div className={styles.cardHeading}><div><span>04 · 内部公司会议</span><h2>先独立审阅，再保留分歧</h2></div><span className={styles.sameModel}>{boardResult ? `同一模型多视角 · ${boardResult.model} · ${boardResult.elapsedSeconds}秒` : `会议进行中 · ${meetingReviews.length}/5 已发言`}</span></div>
+      <p className={styles.boardBoundary}>这不是五位真实专家会诊：五个角色使用同一模型、隔离上下文独立分析同一份评分汇总；全部发言完成后，CEO 才读取他们的意见并形成决策。</p>
+      <div className={styles.roleGrid}>{meetingRoles.map((role) => {
+        const review = meetingReviews.find((item) => item.role === role.id) || boardResult?.reviews.find((item) => item.role === role.id);
+        return review ? <RoleCard key={role.id} review={review} /> : <article className={`${styles.roleCard} ${styles.roleWaiting}`} key={role.id}><span>{role.label}</span><h3>{boardLoading ? "正在独立分析…" : "等待发言"}</h3><p>{role.focus}</p><i /></article>;
+      })}</div>
+      {!boardResult && <div className={styles.ceoWaiting}><span>CEO 小龙虾</span><strong>{meetingReviews.length < meetingRoles.length ? `等待 ${meetingRoles.length - meetingReviews.length} 位角色完成发言` : "正在汇总分歧与下一轮动作…"}</strong></div>}
+      {boardResult && <article className={styles.executive}><span>CEO 小龙虾结论</span><h2>{boardResult.executive.decision}</h2><div><section><h3>为什么</h3><ul>{boardResult.executive.rationale.map((item) => <li key={item}>{item}</li>)}</ul></section><section><h3>尚未解决的分歧</h3><ul>{boardResult.executive.disagreements.length ? boardResult.executive.disagreements.map((item) => <li key={item}>{item}</li>) : <li>本轮未识别到明确分歧，仍需用下一病例复核稳定性。</li>}</ul></section><section><h3>下一轮只做这些</h3><ol>{boardResult.executive.nextSprint.map((item) => <li key={item}>{item}</li>)}</ol></section><section><h3>停止扩大试用条件</h3><ul>{boardResult.executive.stopConditions.map((item) => <li key={item}>{item}</li>)}</ul></section></div></article>}
+      {boardResult && <div className={styles.actions}><button type="button" onClick={exportResult}>导出本次 JSON 记录</button><button type="button" onClick={reset}>开始新的试评</button></div>}
     </section>}
 
-    <footer className={styles.footer}><div><strong>OncoPilot Evaluation Lab V0.12.1</strong><span>内部小样本测评框架 · 结果不等同于临床准确率</span></div><nav><a href="/">病历助手</a><a href="https://github.com/longjianw/oncopilot" target="_blank" rel="noreferrer">GitHub 迭代记录</a></nav></footer>
+    <footer className={styles.footer}><div><strong>OncoPilot Evaluation Lab V0.13.0</strong><span>内部小样本测评框架 · 结果不等同于临床准确率</span></div><nav><a href="/">病历助手</a><a href="https://github.com/longjianw/oncopilot" target="_blank" rel="noreferrer">GitHub 迭代记录</a></nav></footer>
   </main>;
 }

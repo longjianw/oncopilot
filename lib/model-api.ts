@@ -30,6 +30,8 @@ type ModelRequestOptions = {
   maxOutputTokens?: number;
   timeoutMs?: number;
   thinking?: "enabled" | "disabled" | "auto";
+  reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh" | "max";
+  store?: boolean;
   jsonObject?: boolean;
 };
 
@@ -38,6 +40,8 @@ const requestBody = (model: string, prompt: string, options: ModelRequestOptions
   input: prompt,
   ...(stream ? { stream: true } : {}),
   ...(options.thinking ? { thinking: { type: options.thinking } } : {}),
+  ...(options.reasoningEffort ? { reasoning: { effort: options.reasoningEffort } } : {}),
+  ...(typeof options.store === "boolean" ? { store: options.store } : {}),
   ...(options.jsonObject ? { text: { format: { type: "json_object" } } } : {}),
   ...(options.maxOutputTokens ? { max_output_tokens: options.maxOutputTokens } : {}),
 });

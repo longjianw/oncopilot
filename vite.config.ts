@@ -19,6 +19,9 @@ const localBindingConfig = {
     ARK_CODING_MODEL: process.env.ARK_CODING_MODEL ?? "deepseek-v4-pro",
     ARK_REFERENCE_MODEL: process.env.ARK_REFERENCE_MODEL ?? "deepseek-v4-pro",
     ARK_CODING_BASE_URL: process.env.ARK_CODING_BASE_URL ?? "https://ark.cn-beijing.volces.com/api/coding/v3",
+    OPENAI_API_KEY: process.env.OPENAI_API_KEY ?? "",
+    OPENAI_EVAL_MODEL: process.env.OPENAI_EVAL_MODEL ?? "gpt-5.6-sol",
+    OPENAI_BASE_URL: process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",
   },
   d1_databases: d1
     ? [

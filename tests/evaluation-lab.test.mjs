@@ -13,6 +13,9 @@ const environment = {
   ARK_CODING_MODEL: "deepseek-v4-pro",
   ARK_REFERENCE_MODEL: "deepseek-v4-pro",
   ARK_CODING_BASE_URL: "https://synthetic.example/v3",
+  OPENAI_API_KEY: "synthetic-openai-test-key",
+  OPENAI_EVAL_MODEL: "gpt-5.6-sol",
+  OPENAI_BASE_URL: "https://openai.synthetic/v1",
 };
 
 const context = { waitUntil() {}, passThroughOnException() {} };
@@ -25,10 +28,13 @@ test("evaluation lab renders the blinded workflow and same-model boundary", asyn
   assert.match(html, /内部测评实验室/);
   assert.match(html, /随机分配并开始盲评/);
   assert.match(html, /同一模型多视角/);
+  assert.match(html, /用 GPT-5.6 Sol 自动生成对照/);
+  assert.match(html, /市场与用户研究/);
+  assert.match(html, /CEO 小龙虾/);
   assert.match(html, /不能称为临床准确率/);
   assert.doesNotMatch(html, /2刘三元|强哥的病人/);
 });
-test("evaluation board uses four isolated reviews and one executive synthesis without raw outputs", async () => {
+test("evaluation board uses five isolated reviews and one executive synthesis without raw outputs", async () => {
   const worker = await workerFor("board");
   const originalFetch = globalThis.fetch;
   const prompts = [];
@@ -37,7 +43,7 @@ test("evaluation board uses four isolated reviews and one executive synthesis wi
     const requestBody = JSON.parse(init.body);
     assert.equal(requestBody.model, "deepseek-v4-pro");
     prompts.push(requestBody.input);
-    const isExecutive = requestBody.input.includes("执行负责人");
+    const isExecutive = requestBody.input.includes("内部评审会的CEO");
     const output = isExecutive
       ? ++executiveCalls === 1
         ? { decision: "继续扩大样本。", rationale: ["回答A总分较高", "回答B出现P0硬失败"], disagreements: ["速度优势是否足以抵消修改成本仍未解决"], next_sprint: ["补充三个合成长病程病例", "再考虑修复问题"], stop_conditions: ["再次出现无依据分期即停止扩大试用"] }
@@ -61,15 +67,50 @@ test("evaluation board uses four isolated reviews and one executive synthesis wi
     }), environment, context);
     assert.equal(response.status, 200);
     const payload = await response.json();
-    assert.equal(payload.result.reviews.length, 4);
+    assert.equal(payload.result.reviews.length, 5);
     assert.equal(payload.result.sameModelReview, true);
     assert.equal(payload.result.model, "deepseek-v4-pro");
-    assert.equal(prompts.length, 6);
-    assert.equal(prompts.filter((prompt) => prompt.includes("同一高能力模型在隔离上下文")).length, 4);
+    assert.equal(prompts.length, 7);
+    assert.equal(prompts.filter((prompt) => prompt.includes("同一高能力模型在隔离上下文")).length, 5);
+    assert.ok(prompts.some((prompt) => prompt.includes("市场与用户研究小龙虾")));
     assert.match(prompts.at(-1), /独立角色意见/);
     assert.match(prompts.at(-1), /P0修复之前/);
     assert.ok(prompts.every((prompt) => !prompt.includes("这段完整回答不应发送")));
     assert.ok(prompts.every((prompt) => !prompt.includes("另一段原始回答也不应发送")));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("GPT-5.6 Sol baseline is blind, high-reasoning, and not stored", async () => {
+  const worker = await workerFor("baseline");
+  const originalFetch = globalThis.fetch;
+  let captured;
+  globalThis.fetch = async (url, init) => {
+    captured = { url: String(url), body: JSON.parse(init.body) };
+    return new Response(JSON.stringify({ output_text: "主诉：合成资料生成的盲化对照。" }), { status: 200 });
+  };
+  try {
+    const response = await worker.fetch(new Request("http://localhost/api/evaluation-baseline", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        track: "generation_only",
+        evaluation_input: "合成事件账本：2月前发现右肺占位；1月前接受一线全身治疗；1周前复查提示病灶增大。",
+        gold_summary: "不得发送的人工金标准",
+        oncopilot_output: "不得发送的OncoPilot答案",
+      }),
+    }), environment, context);
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.model, "gpt-5.6-sol");
+    assert.equal(captured.url, "https://openai.synthetic/v1/responses");
+    assert.equal(captured.body.model, "gpt-5.6-sol");
+    assert.equal(captured.body.store, false);
+    assert.equal(captured.body.reasoning.effort, "high");
+    assert.doesNotMatch(captured.body.input, /不得发送的人工金标准/);
+    assert.doesNotMatch(captured.body.input, /不得发送的OncoPilot答案/);
+    assert.match(captured.body.input, /2月前发现右肺占位/);
   } finally {
     globalThis.fetch = originalFetch;
   }

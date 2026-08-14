@@ -12,6 +12,9 @@ interface Env {
   ARK_VISION_API_KEY?: string;
   ARK_VISION_MODEL?: string;
   ARK_VISION_BASE_URL?: string;
+  OPENAI_API_KEY?: string;
+  OPENAI_EVAL_MODEL?: string;
+  OPENAI_BASE_URL?: string;
   IMAGES: {
     input(stream: ReadableStream): {
       transform(options: Record<string, unknown>): {
@@ -33,28 +36,32 @@ interface ExecutionContext {
 // const imageConfig: ImageConfig = { dangerouslyAllowSVG: true };
 
 const worker = {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    if (env.ARK_CODING_API_KEY) process.env.ARK_CODING_API_KEY = env.ARK_CODING_API_KEY;
-    if (env.ARK_CODING_MODEL) process.env.ARK_CODING_MODEL = env.ARK_CODING_MODEL;
-    if (env.ARK_REFERENCE_MODEL) process.env.ARK_REFERENCE_MODEL = env.ARK_REFERENCE_MODEL;
-    if (env.ARK_CODING_BASE_URL) process.env.ARK_CODING_BASE_URL = env.ARK_CODING_BASE_URL;
-    if (env.ARK_VISION_API_KEY) process.env.ARK_VISION_API_KEY = env.ARK_VISION_API_KEY;
-    if (env.ARK_VISION_MODEL) process.env.ARK_VISION_MODEL = env.ARK_VISION_MODEL;
-    if (env.ARK_VISION_BASE_URL) process.env.ARK_VISION_BASE_URL = env.ARK_VISION_BASE_URL;
+  async fetch(request: Request, env: Env | undefined, ctx: ExecutionContext): Promise<Response> {
+    const bindings = env || ({} as Env);
+    if (bindings.ARK_CODING_API_KEY) process.env.ARK_CODING_API_KEY = bindings.ARK_CODING_API_KEY;
+    if (bindings.ARK_CODING_MODEL) process.env.ARK_CODING_MODEL = bindings.ARK_CODING_MODEL;
+    if (bindings.ARK_REFERENCE_MODEL) process.env.ARK_REFERENCE_MODEL = bindings.ARK_REFERENCE_MODEL;
+    if (bindings.ARK_CODING_BASE_URL) process.env.ARK_CODING_BASE_URL = bindings.ARK_CODING_BASE_URL;
+    if (bindings.ARK_VISION_API_KEY) process.env.ARK_VISION_API_KEY = bindings.ARK_VISION_API_KEY;
+    if (bindings.ARK_VISION_MODEL) process.env.ARK_VISION_MODEL = bindings.ARK_VISION_MODEL;
+    if (bindings.ARK_VISION_BASE_URL) process.env.ARK_VISION_BASE_URL = bindings.ARK_VISION_BASE_URL;
+    if (bindings.OPENAI_API_KEY) process.env.OPENAI_API_KEY = bindings.OPENAI_API_KEY;
+    if (bindings.OPENAI_EVAL_MODEL) process.env.OPENAI_EVAL_MODEL = bindings.OPENAI_EVAL_MODEL;
+    if (bindings.OPENAI_BASE_URL) process.env.OPENAI_BASE_URL = bindings.OPENAI_BASE_URL;
     const url = new URL(request.url);
 
     if (url.pathname === "/_vinext/image") {
       const allowedWidths = [...DEFAULT_DEVICE_SIZES, ...DEFAULT_IMAGE_SIZES];
       return handleImageOptimization(request, {
-        fetchAsset: (path) => env.ASSETS.fetch(new Request(new URL(path, request.url))),
+        fetchAsset: (path) => bindings.ASSETS.fetch(new Request(new URL(path, request.url))),
         transformImage: async (body, { width, format, quality }) => {
-          const result = await env.IMAGES.input(body).transform(width > 0 ? { width } : {}).output({ format, quality });
+          const result = await bindings.IMAGES.input(body).transform(width > 0 ? { width } : {}).output({ format, quality });
           return result.response();
         },
       }, allowedWidths);
     }
 
-    return handler.fetch(request, env, ctx);
+    return handler.fetch(request, bindings, ctx);
   },
 };
 

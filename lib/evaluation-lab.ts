@@ -111,7 +111,7 @@ export const scoreGuide = [
   "4 = 证据充分且可直接进入医生复核",
 ];
 
-export type BoardRoleId = "product" | "engineering" | "clinical_quality" | "evaluation";
+export type BoardRoleId = "product" | "user_research" | "engineering" | "clinical_quality" | "evaluation";
 
 export type BoardRoleReview = {
   role: BoardRoleId;
