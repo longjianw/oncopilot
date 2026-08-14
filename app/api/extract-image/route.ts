@@ -67,7 +67,7 @@ export async function POST(request: Request) {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify(hasSeparateVisionService ? requestBody : { ...requestBody, max_output_tokens: 900 }),
-      signal: AbortSignal.timeout(50000),
+      signal: AbortSignal.timeout(75000),
     });
 
     if (!upstream.ok) {
@@ -81,7 +81,7 @@ export async function POST(request: Request) {
     return Response.json({ extracted_text: extractedText, model, method: "vision_transcription" }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     const message = error instanceof Error && error.name === "TimeoutError"
-      ? "本页超过50秒仍未完成，请稍后只重试本页。"
+      ? "本页超过75秒仍未完成，请稍后只重试本页。"
       : error instanceof Error && /413|Payload Too Large/.test(error.message)
         ? "图片仍然过大，请裁剪到单页后重试。"
         : "图片暂时没有识别出来，请重试一次。";

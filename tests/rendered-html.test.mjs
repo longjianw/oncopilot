@@ -255,7 +255,7 @@ async function analyzeLongSourceWithMockModel(draftFails = false, extractionFail
       if (extractionFails) return new Response(JSON.stringify({ output_text: JSON.stringify({ current_purpose: null, sources: [], facts: [], pending_fields: [] }) }), { status: 200 });
       return new Response(JSON.stringify({ output_text: JSON.stringify({
         current_purpose: prompt.includes("进一步评估") ? "进一步评估" : null,
-        sources: [{ source_id: "S1", title: `完全合成分段${extractionCalls}`, evidence: "完全合成检查摘要" }],
+        sources: [{ source_id: "S1", title: `完全合成分段${extractionCalls}`, evidence: "完全合成检查摘要".repeat(80) }],
         facts: [{ fact_id: "F1", field: "other", value: `第${extractionCalls}段检查资料已提供`, event_time: "未提供", event_type: "other", encounter_scope: "prior", certainty: "explicit", source_ids: ["S1"] }],
         pending_fields: [],
       }) }), { status: 200 });
@@ -271,6 +271,56 @@ async function analyzeLongSourceWithMockModel(draftFails = false, extractionFail
       { waitUntil() {}, passThroughOnException() {} },
     );
     return { response, extractionCalls, draftCalls, maxActiveExtractions };
+  } finally { globalThis.fetch = originalFetch; }
+}
+
+async function analyzeMultiLineTreatmentHistory() {
+  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
+  workerUrl.searchParams.set("multi-line-history-test", `${process.pid}-${Date.now()}`);
+  const { default: worker } = await import(workerUrl.href);
+  const sourceText = [
+    "【完全合成长病程】",
+    "2019年1月确诊某肿瘤，2019年2月开始一线治疗。",
+    "2020年3月评估进展，2020年4月开始二线治疗。",
+    "2021年6月再次进展，2021年7月开始三线治疗。",
+    "2026年8月出现发热1天，本次为处理发热入院。",
+    "高血压5年；20年前行阑尾切除术。",
+  ].join("\n");
+  const extraction = {
+    current_purpose: "处理发热",
+    sources: [{ source_id: "S1", title: "完全合成长病程", evidence: sourceText }],
+    facts: [
+      { fact_id: "F1", field: "diagnosis", value: "2019年1月确诊某肿瘤", event_time: "2019年1月", event_type: "onset_diagnosis", encounter_scope: "prior", certainty: "explicit", source_ids: ["S1"] },
+      { fact_id: "F2", field: "first_line", value: "2019年2月开始一线治疗", event_time: "2019年2月", event_type: "prior_treatment", encounter_scope: "prior", certainty: "explicit", source_ids: ["S1"] },
+      { fact_id: "F3", field: "progression", value: "2020年3月评估进展", event_time: "2020年3月", event_type: "progression_evidence", encounter_scope: "prior", certainty: "explicit", source_ids: ["S1"] },
+      { fact_id: "F4", field: "second_line", value: "2020年4月开始二线治疗", event_time: "2020年4月", event_type: "prior_treatment", encounter_scope: "prior", certainty: "explicit", source_ids: ["S1"] },
+      { fact_id: "F5", field: "progression", value: "2021年6月再次进展", event_time: "2021年6月", event_type: "progression_evidence", encounter_scope: "prior", certainty: "explicit", source_ids: ["S1"] },
+      { fact_id: "F6", field: "third_line", value: "2021年7月开始三线治疗", event_time: "2021年7月", event_type: "prior_treatment", encounter_scope: "prior", certainty: "explicit", source_ids: ["S1"] },
+      { fact_id: "F7", field: "current_status", value: "2026年8月出现发热1天", event_time: "2026年8月", event_type: "current_status", encounter_scope: "current", certainty: "explicit", source_ids: ["S1"] },
+      { fact_id: "F8", field: "hypertension", value: "高血压5年", event_time: "5年", event_type: "past_history", encounter_scope: "prior", certainty: "explicit", source_ids: ["S1"] },
+      { fact_id: "F9", field: "old_surgery", value: "20年前行阑尾切除术", event_time: "20年前", event_type: "past_history", encounter_scope: "prior", certainty: "explicit", source_ids: ["S1"] },
+      { fact_id: "F10", field: "current_purpose", value: "本次为处理发热入院", event_time: "本次", event_type: "current_purpose", encounter_scope: "current", certainty: "explicit", source_ids: ["S1"] },
+    ],
+    pending_fields: [],
+  };
+  const draft = {
+    chief_complaint: "某肿瘤多线治疗后，发热1天",
+    present_illness: "患者2019年1月确诊某肿瘤，2019年2月开始一线治疗。2020年3月评估进展，2020年4月开始二线治疗。2021年6月再次进展，2021年7月开始三线治疗。2026年8月出现发热1天，本次为处理发热入院。",
+    past_history: "高血压5年。20年前行阑尾切除术。",
+    personal_history: "", family_history: "", allergy_history: "", specialist_exam: "", diagnosis_summary: "", plan_summary: "", pending_fields: [],
+    present_illness_fact_ids: ["C1-F1", "C1-F2", "C1-F3", "C1-F4", "C1-F5", "C1-F6", "C1-F7", "C1-F10"],
+  };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => {
+    const prompt = JSON.parse(init.body).input;
+    return new Response(JSON.stringify({ output_text: JSON.stringify(prompt.includes("结构化事实抽取器") ? extraction : draft) }), { status: 200 });
+  };
+  try {
+    return await worker.fetch(
+      new Request("http://localhost/api/analyze", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ source_text: sourceText, current_purpose: "处理发热" }) }),
+      { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) }, ARK_CODING_API_KEY: "synthetic-test-key" },
+      { waitUntil() {}, passThroughOnException() {} },
+    );
   } finally { globalThis.fetch = originalFetch; }
 }
 
@@ -941,6 +991,7 @@ test("renders the single-entry admission draft package workflow", async () => {
   assert.equal(response.status, 200);
   const html = await response.text();
   const pageSource = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const analyzeSource = await readFile(new URL("../app/api/analyze/route.ts", import.meta.url), "utf8");
   assert.match(html, /OncoPilot/);
   assert.match(html, /肿瘤入院记录草稿助手/);
   assert.match(html, /资料再少/);
@@ -988,8 +1039,10 @@ test("renders the single-entry admission draft package workflow", async () => {
   assert.match(pageSource, /正在用图像模型提取入院关键资料/);
   assert.match(pageSource, /重试本页/);
   assert.doesNotMatch(pageSource, /fetch\("\/api\/extract-images/);
-  assert.match(pageSource, /RECOGNITION_CONCURRENCY = 3/);
+  assert.match(pageSource, /RECOGNITION_CONCURRENCY = 2/);
   assert.match(pageSource, /Math\.min\(RECOGNITION_CONCURRENCY, identified\.length\)/);
+  assert.match(analyzeSource, /FACT_EXTRACTION_CONCURRENCY = 2/);
+  assert.match(analyzeSource, /Math\.min\(FACT_EXTRACTION_CONCURRENCY, chunks\.length\)/);
   assert.match(pageSource, /const results: Array<string \| null>/);
   assert.match(pageSource, /setSourceText\(baseText/);
   assert.match(pageSource, /正在分段核对事实并生成草稿/);
@@ -1161,18 +1214,31 @@ test("stops after two failed fact-extraction attempts instead of generating from
   assert.match(body.error, /事实|结构|重试|质量门禁/);
 });
 
-test("segments long multi-page source text before fact extraction and merges the facts", async () => {
+test("segments a ten-page source, limits concurrency, and bounds source evidence", async () => {
   const { response, extractionCalls, draftCalls, maxActiveExtractions } = await analyzeLongSourceWithMockModel();
   assert.equal(response.status, 200, await response.clone().text());
   const body = await response.json();
   assert.equal(body.processing_mode, "chunked");
   assert.ok(body.chunk_count >= 2);
   assert.equal(extractionCalls, body.chunk_count);
-  assert.equal(maxActiveExtractions, body.chunk_count);
+  assert.equal(maxActiveExtractions, Math.min(2, body.chunk_count));
   assert.equal(draftCalls, 1);
+  assert.ok(body.result.sources.every((source) => source.evidence.length <= 500));
   assert.equal(body.result.facts.length, body.chunk_count + 1);
   assert.ok(body.result.facts.some((fact) => fact.fact_id === "F-PURPOSE"));
   assert.ok(body.result.facts.filter((fact) => fact.fact_id !== "F-PURPOSE").every((fact) => /^C\d+-F1$/.test(fact.fact_id)));
+});
+
+test("keeps first-, second-, and third-line treatment plus unrelated history in their sections", async () => {
+  const response = await analyzeMultiLineTreatmentHistory();
+  assert.equal(response.status, 200, await response.clone().text());
+  const body = await response.json();
+  const narrative = body.result.present_illness;
+  const milestones = ["确诊某肿瘤", "一线治疗", "2020年3月评估进展", "二线治疗", "2021年6月再次进展", "三线治疗", "发热1天"];
+  for (const milestone of milestones) assert.match(narrative, new RegExp(milestone));
+  assert.match(body.result.past_history, /高血压5年/);
+  assert.match(body.result.past_history, /阑尾切除术/);
+  assert.doesNotMatch(narrative, /阑尾切除术/);
 });
 
 test("returns an error instead of a program-built draft when long-source prose generation fails", async () => {

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const workerFor = async (suffix) => {
@@ -25,13 +26,15 @@ test("evaluation lab renders the blinded workflow and same-model boundary", asyn
   const response = await worker.fetch(new Request("http://localhost/evaluation-lab", { headers: { accept: "text/html" } }), environment, context);
   assert.equal(response.status, 200);
   const html = await response.text();
-  assert.match(html, /内部测评实验室/);
+  const pageSource = await readFile(new URL("../app/evaluation-lab/page.tsx", import.meta.url), "utf8");
+  assert.match(html, /A\/B 测评实验室/);
   assert.match(html, /随机分配并开始盲评/);
-  assert.match(html, /同一模型多视角/);
+  assert.match(html, /五个角色分别看分数/);
   assert.match(html, /用 GPT-5.6 Sol 自动生成对照/);
-  assert.match(html, /市场与用户研究/);
-  assert.match(html, /CEO 小龙虾/);
-  assert.match(html, /不能称为临床准确率/);
+  assert.match(pageSource, /市场与用户研究/);
+  assert.match(pageSource, /CEO 小龙虾/);
+  assert.match(html, /龙虾评审会/);
+  assert.match(html, /还不能据此计算临床准确率/);
   assert.doesNotMatch(html, /2刘三元|强哥的病人/);
 });
 test("evaluation board uses five isolated reviews and one executive synthesis without raw outputs", async () => {

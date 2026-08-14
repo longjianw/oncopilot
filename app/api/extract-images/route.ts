@@ -86,7 +86,7 @@ export async function POST(request: Request) {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify(requestBody),
-      signal: AbortSignal.timeout(50000),
+      signal: AbortSignal.timeout(75000),
     });
     if (!upstream.ok) throw new Error(`视觉模型请求失败：${upstream.status}`);
     const data = await upstream.json() as VisionResponse;
@@ -96,7 +96,7 @@ export async function POST(request: Request) {
     return Response.json({ pages, model, method: "batched_vision_transcription" }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     const message = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")
-      ? "这一批超过50秒仍未完成，请只重试这一批中的失败页。"
+      ? "这一批超过75秒仍未完成，请只重试这一批中的失败页。"
       : "这一批未完整返回，请只重试失败页。";
     return Response.json({ error: message }, { status: 502, headers: { "Cache-Control": "no-store" } });
   }

@@ -77,8 +77,8 @@ const RoleCard = ({ review }: { review: BoardRoleReview }) => <article className
   <span>{review.roleLabel}</span>
   <h3>{review.headline}</h3>
   <ul>{review.evidence.map((item) => <li key={item}>{item}</li>)}</ul>
-  <p><b>本轮优先动作：</b>{review.recommendation}</p>
-  <small>可能误导结论：{review.concern}</small>
+  <p><b>本轮先做：</b>{review.recommendation}</p>
+  <small>需注意：{review.concern}</small>
 </article>;
 
 export default function EvaluationLabPage() {
@@ -219,7 +219,7 @@ export default function EvaluationLabPage() {
 
   const runBoard = async () => {
     if (!boardReady) {
-      setBoardError("请先完成 A/B 的全部20项评分，并分别写一句评审摘要，再召开内部评审会。");
+      setBoardError("请先完成 A/B 的20项评分，并分别写一句评审摘要，再开龙虾评审会。");
       return;
     }
     setBoardLoading(true);
@@ -250,7 +250,7 @@ export default function EvaluationLabPage() {
       setBoardResult({ reviews, executive: executivePayload.result.executive, model: executivePayload.result.model || "deepseek-v4-pro", elapsedSeconds: Math.round((performance.now() - startedAt) / 100) / 10, sameModelReview: true });
       setRevealed(true);
     } catch (error) {
-      setBoardError(error instanceof Error ? error.message : "内部评审会暂时失败。");
+      setBoardError(error instanceof Error ? error.message : "龙虾评审会本次没有完成。");
     } finally { setBoardLoading(false); }
   };
 
@@ -277,29 +277,29 @@ export default function EvaluationLabPage() {
 
   return <main className={styles.shell}>
     <header className={styles.header}>
-      <a href="/" className={styles.brand}><span>OP</span><div><strong>OncoPilot</strong><small>内部测评实验室</small></div></a>
-      <div><span className={styles.version}>V0.13.1</span><a href="/">返回病历助手</a></div>
+      <a href="/" className={styles.brand}><span>OP</span><div><strong>OncoPilot</strong><small>A/B 测评实验室</small></div></a>
+      <div><span className={styles.version}>V0.14.0</span><a href="/">返回病历助手</a></div>
     </header>
 
     <section className={styles.hero}>
-      <div><span className={styles.eyebrow}>EVALUATION LAB · PILOT</span><h1>先知道哪里不够好，<br />再决定下一版改什么。</h1><p>同一病例、盲化 A/B、统一评分；同一模型多视角下，产品经理、市场与用户研究、技术、临床质量、测评师五只小龙虾独立发言，最后由 CEO 小龙虾汇总。</p></div>
-      <aside><strong>当前实验边界</strong><p>病例原文和两组完整回答只停留在当前页面；“公司会议”只接收分数、错误数、耗时和简短评语。</p><small>两例试评只能验证流程与发现问题，不能称为临床准确率。</small></aside>
+      <div><span className={styles.eyebrow}>A/B 盲测</span><h1>同一份资料，<br />两套回答按同一把尺子评分。</h1><p>先隐藏来源，评完再揭盲。之后由五个角色分别看分数、错误和耗时，CEO 最后归纳下一版要改的事。</p></div>
+      <aside><strong>本轮怎么测</strong><p>病例原文和完整回答不发给龙虾评审会。它们只看分数、错误数、耗时和医生评语。</p><small>两个病例可以用来找问题，还不能据此计算临床准确率。</small></aside>
     </section>
 
-    <nav className={styles.steps} aria-label="测评流程"><span className={!assignment ? styles.active : styles.done}><b>1</b>准备对照</span><i /><span className={assignment && !revealed ? styles.active : assignment ? styles.done : ""}><b>2</b>盲评 A/B</span><i /><span className={revealed ? styles.active : ""}><b>3</b>揭盲与开会</span></nav>
+    <nav className={styles.steps} aria-label="测评流程"><span className={!assignment ? styles.active : styles.done}><b>1</b>准备病例</span><i /><span className={assignment && !revealed ? styles.active : assignment ? styles.done : ""}><b>2</b>盲评 A/B</span><i /><span className={revealed ? styles.active : ""}><b>3</b>揭盲并开会</span></nav>
 
     <section className={styles.card}>
-      <div className={styles.cardHeading}><div><span>01 · 实验设置</span><h2>先固定比较条件</h2></div><button type="button" onClick={loadSynthetic}>装入合成示例</button></div>
+      <div className={styles.cardHeading}><div><span>01 · 测试设置</span><h2>设置本轮条件</h2></div><button type="button" onClick={loadSynthetic}>装入合成示例</button></div>
       <div className={styles.formGrid}>
         <label><span>试评编号</span><input value={session.caseLabel} maxLength={80} onChange={(event) => setSession((current) => ({ ...current, caseLabel: event.target.value }))} /></label>
         <label><span>评审者</span><input value={session.evaluator} maxLength={80} placeholder="例如：肿瘤科住院医师 01" onChange={(event) => setSession((current) => ({ ...current, evaluator: event.target.value }))} /></label>
         <label className={styles.wide}><span>评测轨道</span><select value={session.track} onChange={(event) => setSession((current) => ({ ...current, track: event.target.value as EvaluationSession["track"] }))}><option value="generation_only">统一临床事件账本后，只比较生成质量</option><option value="end_to_end">从资料输入到最终结果的端到端比较</option></select><small>建议先跑“统一账本”，能区分是资料抽取差，还是正文生成差。</small></label>
-        <label className={styles.wide}><span>人工金标准 / 必须覆盖的关键事实</span><textarea value={session.goldSummary} maxLength={4000} placeholder="由医生先写出关键事件、不可新增的事实和本次核心问题。该内容不会发送给内部公司会议。" onChange={(event) => setSession((current) => ({ ...current, goldSummary: event.target.value }))} /></label>
+        <label className={styles.wide}><span>人工金标准 / 必须覆盖的关键事实</span><textarea value={session.goldSummary} maxLength={4000} placeholder="由医生写下必须覆盖的事件、不能新增的事实和本次核心问题。龙虾评审会不会收到这段内容。" onChange={(event) => setSession((current) => ({ ...current, goldSummary: event.target.value }))} /></label>
       </div>
     </section>
 
     <section className={styles.card}>
-      <div className={styles.cardHeading}><div><span>02 · 双路回答</span><h2>收齐两份结果，再随机分配 A/B</h2></div><a href="https://developers.openai.com/api/docs/models/gpt-5.6-sol" target="_blank" rel="noreferrer">GPT‑5.6 Sol 官方说明 ↗</a></div>
+      <div className={styles.cardHeading}><div><span>02 · 两份回答</span><h2>准备好之后，随机分配 A/B</h2></div><a href="https://developers.openai.com/api/docs/models/gpt-5.6-sol" target="_blank" rel="noreferrer">GPT-5.6 Sol 官方说明 ↗</a></div>
       <div className={styles.modelNote}><div><b>OncoPilot 组</b><span>当前正式流程 · DeepSeek V4 Pro</span></div><i /><div><b>文本基线组</b><input value={baselineLabel} maxLength={100} onChange={(event) => setBaselineLabel(event.target.value)} /></div><p>自动基线使用 GPT-5.6 Sol 高推理强度；也保留手动导入，便于比较不同外部模型。</p></div>
       <div className={styles.baselineInput}>
         <label><span>{session.track === "generation_only" ? "本轮统一临床事件账本" : "本轮端到端源资料"}</span><textarea value={evaluationInput} maxLength={100000} onChange={(event) => setEvaluationInput(event.target.value)} placeholder={session.track === "generation_only" ? "粘贴同一份、已人工确认的临床事件账本" : "粘贴本轮去标识化源资料"} /><small>只在点击自动生成时发送给对照模型；不会与 OncoPilot 回答或人工金标准一起发送，也不写入本机草稿。</small></label>
@@ -326,22 +326,22 @@ export default function EvaluationLabPage() {
       <div className={styles.errorGrid}>{(["armA", "armB"] as const).map((arm, index) => <section key={arm}><h3>回答 {index === 0 ? "A" : "B"} · 错误与效率</h3><div><label><span>P0 致命错误</span><input type="number" min="0" max="99" value={session[arm].p0Count} onChange={(event) => updateArm(arm, { p0Count: Number(event.target.value) })} /></label><label><span>P1 重要错误</span><input type="number" min="0" max="99" value={session[arm].p1Count} onChange={(event) => updateArm(arm, { p1Count: Number(event.target.value) })} /></label><label><span>耗时（秒）</span><input type="number" min="0" max="3600" value={session[arm].latencySeconds} onChange={(event) => updateArm(arm, { latencySeconds: Number(event.target.value) })} /></label><label><span>重试次数</span><input type="number" min="0" max="20" value={session[arm].retryCount} onChange={(event) => updateArm(arm, { retryCount: Number(event.target.value) })} /></label></div><label><span>评审摘要（只写错误类型与修改成本）</span><textarea maxLength={1200} value={session[arm].reviewerNote} onChange={(event) => updateArm(arm, { reviewerNote: event.target.value })} placeholder="例如：漏掉二线治疗；把外院建议转院写成当前计划；修改约需8分钟。" /></label></section>)}</div>
       <div className={styles.scoreSummary}><article><span>回答 A</span><strong>{scoreA.score}</strong><small>/ 100 {scoreA.hardFail ? "· P0 硬失败" : ""}</small></article><article><span>回答 B</span><strong>{scoreB.score}</strong><small>/ 100 {scoreB.hardFail ? "· P0 硬失败" : ""}</small></article><div><span>当前盲评结果</span><h3>{winner === "接近" ? "A / B 暂无明确优势" : `回答 ${winner} 暂时领先`}</h3><p>P0 优先于总分；差距小于 1 分视为接近。</p></div></div>
       <p className={styles.ratingProgress}>已完成 {ratingCount}/{evaluationDimensions.length * 2} 项评分 · 两组评审摘要均填写后才可开会</p>
-      <div className={styles.actions}><button type="button" disabled={ratingCount < evaluationDimensions.length * 2} onClick={() => setRevealed(true)}>{revealed ? "身份已经揭盲" : "完成评分并揭盲"}</button><button type="button" className={styles.primaryInline} disabled={boardLoading || !boardReady} onClick={runBoard}>{boardLoading ? `${meetingReviews.length}/5 只小龙虾已发言…` : "召开 AI 公司评审会"}</button></div>
+      <div className={styles.actions}><button type="button" disabled={ratingCount < evaluationDimensions.length * 2} onClick={() => setRevealed(true)}>{revealed ? "已揭盲" : "完成评分并揭盲"}</button><button type="button" className={styles.primaryInline} disabled={boardLoading || !boardReady} onClick={runBoard}>{boardLoading ? `${meetingReviews.length}/5 个角色已发言…` : "召开龙虾评审会"}</button></div>
       {boardError && <p className={styles.error}>{boardError}</p>}
     </section>}
 
     {boardStarted && <section className={`${styles.card} ${styles.board}`}>
-      <div className={styles.cardHeading}><div><span>04 · 内部公司会议</span><h2>先独立审阅，再保留分歧</h2></div><span className={styles.sameModel}>{boardResult ? `同一模型多视角 · ${boardResult.model} · ${boardResult.elapsedSeconds}秒` : `会议进行中 · ${meetingReviews.length}/5 已发言`}</span></div>
-      <p className={styles.boardBoundary}>这不是五位真实专家会诊：五个角色使用同一模型、隔离上下文独立分析同一份评分汇总；全部发言完成后，CEO 才读取他们的意见并形成决策。</p>
+      <div className={styles.cardHeading}><div><span>04 · 龙虾评审会</span><h2>五个角色先分别看，CEO 最后汇总</h2></div><span className={styles.sameModel}>{boardResult ? `同一模型的五个视角 · ${boardResult.model} · ${boardResult.elapsedSeconds}秒` : `会议进行中 · ${meetingReviews.length}/5 已发言`}</span></div>
+      <p className={styles.boardBoundary}>五个角色用的是同一个模型，不是五位真实专家。它们在隔离的上下文中分别分析评分汇总，全部完成后 CEO 才能读取意见。</p>
       <div className={styles.roleGrid}>{meetingRoles.map((role) => {
         const review = meetingReviews.find((item) => item.role === role.id) || boardResult?.reviews.find((item) => item.role === role.id);
         return review ? <RoleCard key={role.id} review={review} /> : <article className={`${styles.roleCard} ${styles.roleWaiting}`} key={role.id}><span>{role.label}</span><h3>{boardLoading ? "正在独立分析…" : "等待发言"}</h3><p>{role.focus}</p><i /></article>;
       })}</div>
       {!boardResult && <div className={styles.ceoWaiting}><span>CEO 小龙虾</span><strong>{meetingReviews.length < meetingRoles.length ? `等待 ${meetingRoles.length - meetingReviews.length} 位角色完成发言` : "正在汇总分歧与下一轮动作…"}</strong></div>}
-      {boardResult && <article className={styles.executive}><span>CEO 小龙虾结论</span><h2>{boardResult.executive.decision}</h2><div><section><h3>为什么</h3><ul>{boardResult.executive.rationale.map((item) => <li key={item}>{item}</li>)}</ul></section><section><h3>尚未解决的分歧</h3><ul>{boardResult.executive.disagreements.length ? boardResult.executive.disagreements.map((item) => <li key={item}>{item}</li>) : <li>本轮未识别到明确分歧，仍需用下一病例复核稳定性。</li>}</ul></section><section><h3>下一轮只做这些</h3><ol>{boardResult.executive.nextSprint.map((item) => <li key={item}>{item}</li>)}</ol></section><section><h3>停止扩大试用条件</h3><ul>{boardResult.executive.stopConditions.map((item) => <li key={item}>{item}</li>)}</ul></section></div></article>}
+      {boardResult && <article className={styles.executive}><span>CEO 结论</span><h2>{boardResult.executive.decision}</h2><div><section><h3>理由</h3><ul>{boardResult.executive.rationale.map((item) => <li key={item}>{item}</li>)}</ul></section><section><h3>还有哪些分歧</h3><ul>{boardResult.executive.disagreements.length ? boardResult.executive.disagreements.map((item) => <li key={item}>{item}</li>) : <li>本轮没有明确分歧，下一个病例再看是否稳定。</li>}</ul></section><section><h3>下一轮要做的事</h3><ol>{boardResult.executive.nextSprint.map((item) => <li key={item}>{item}</li>)}</ol></section><section><h3>什么情况下暂停扩大试用</h3><ul>{boardResult.executive.stopConditions.map((item) => <li key={item}>{item}</li>)}</ul></section></div></article>}
       {boardResult && <div className={styles.actions}><button type="button" onClick={exportResult}>导出本次 JSON 记录</button><button type="button" onClick={reset}>开始新的试评</button></div>}
     </section>}
 
-    <footer className={styles.footer}><div><strong>OncoPilot Evaluation Lab V0.13.1</strong><span>内部小样本测评框架 · 结果不等同于临床准确率</span></div><nav><a href="/">病历助手</a><a href="https://github.com/longjianw/oncopilot" target="_blank" rel="noreferrer">GitHub 迭代记录</a></nav></footer>
+    <footer className={styles.footer}><div><strong>OncoPilot Evaluation Lab V0.14.0</strong><span>小样本测评 · 用来发现问题，不用来宣称临床准确率</span></div><nav><a href="/">病历助手</a><a href="https://github.com/longjianw/oncopilot" target="_blank" rel="noreferrer">GitHub 迭代记录</a></nav></footer>
   </main>;
 }

@@ -4,6 +4,9 @@ import {
   ExtractedFact,
   FactExtraction,
   SourceReference,
+  certaintyLevels,
+  encounterScopes,
+  eventTypes,
   isValidAdmissionDraft,
   isValidFactExtraction,
 } from "../../../lib/admission-record-contract";
@@ -51,6 +54,89 @@ const requestJson = async (baseUrl: string, apiKey: string, model: string, promp
   const rawText = await upstream.text();
   if (!upstream.ok) throw new Error(`上游模型请求失败：${upstream.status}`);
   return parseJson(extractText(JSON.parse(rawText) as ArkResponse));
+};
+
+const factExtractionIssue = (value: unknown) => {
+  if (!value || typeof value !== "object") return "顶层不是JSON对象";
+  const result = value as Record<string, unknown>;
+  if (!(result.current_purpose === null || (typeof result.current_purpose === "string" && result.current_purpose.length <= 160))) return "current_purpose必须为null或160字内字符串";
+  if (!Array.isArray(result.sources) || result.sources.length < 1 || result.sources.length > 40) return "sources数量必须为1至40";
+  const sources = result.sources as Array<Record<string, unknown>>;
+  for (const [index, source] of sources.entries()) {
+    if (!source || typeof source !== "object") return `sources[${index}]不是对象`;
+    if (typeof source.source_id !== "string" || !source.source_id.trim() || source.source_id.length > 40) return `sources[${index}].source_id无效`;
+    if (typeof source.title !== "string" || !source.title.trim() || source.title.length > 160) return `sources[${index}].title无效或过长`;
+    if (typeof source.evidence !== "string" || !source.evidence.trim() || source.evidence.length > 500) return `sources[${index}].evidence无效或超过500字`;
+  }
+  const sourceIds = sources.map((source) => source.source_id as string);
+  if (new Set(sourceIds).size !== sourceIds.length) return "source_id重复";
+  if (!Array.isArray(result.facts) || result.facts.length < 1 || result.facts.length > 120) return "facts数量必须为1至120";
+  const facts = result.facts as Array<Record<string, unknown>>;
+  for (const [index, fact] of facts.entries()) {
+    if (!fact || typeof fact !== "object") return `facts[${index}]不是对象`;
+    const boundedFields: Array<[string, number]> = [["fact_id", 60], ["field", 80], ["value", 800], ["event_time", 80]];
+    for (const [field, max] of boundedFields) {
+      if (typeof fact[field] !== "string" || !(fact[field] as string).trim() || (fact[field] as string).length > max) return `facts[${index}].${field}无效或超过${max}字`;
+    }
+    if (!eventTypes.includes(fact.event_type as typeof eventTypes[number])) return `facts[${index}].event_type不在允许值中`;
+    if (!encounterScopes.includes(fact.encounter_scope as typeof encounterScopes[number])) return `facts[${index}].encounter_scope不在允许值中`;
+    if (!certaintyLevels.includes(fact.certainty as typeof certaintyLevels[number])) return `facts[${index}].certainty不在允许值中`;
+    if (!Array.isArray(fact.source_ids) || fact.source_ids.length < 1 || fact.source_ids.some((id) => typeof id !== "string" || !sourceIds.includes(id))) return `facts[${index}].source_ids缺失或引用了不存在的source_id`;
+  }
+  const factIds = facts.map((fact) => fact.fact_id as string);
+  if (new Set(factIds).size !== factIds.length) return "fact_id重复";
+  if (!Array.isArray(result.pending_fields) || result.pending_fields.length > 8) return "pending_fields数量必须为0至8";
+  for (const [index, item] of result.pending_fields.entries()) {
+    if (typeof item !== "string" || !item.trim() || item.length > 100) return `pending_fields[${index}]无效或超过100字`;
+  }
+  return "未识别的结构问题";
+};
+
+const boundSourceEvidence = (value: unknown) => {
+  if (!value || typeof value !== "object") return value;
+  const extraction = value as Record<string, unknown>;
+  if (!Array.isArray(extraction.sources)) return value;
+  return {
+    ...extraction,
+    sources: extraction.sources.map((source) => {
+      if (!source || typeof source !== "object") return source;
+      const record = source as Record<string, unknown>;
+      return typeof record.evidence === "string"
+        ? { ...record, evidence: record.evidence.trim().slice(0, 500) }
+        : record;
+    }),
+  };
+};
+
+const admissionDraftIssue = (value: unknown) => {
+  if (!value || typeof value !== "object") return "顶层不是JSON对象";
+  const result = value as Record<string, unknown>;
+  const fields = ["chief_complaint", "present_illness", "past_history", "personal_history", "family_history", "allergy_history", "specialist_exam", "diagnosis_summary", "plan_summary"];
+  for (const field of fields) {
+    if (typeof result[field] !== "string") return `${field}必须为字符串，无资料时返回空字符串`;
+    if ((result[field] as string).length > 6000) return `${field}超过6000字`;
+  }
+  if (!(result.chief_complaint as string).trim()) return "chief_complaint不得为空";
+  if ((result.chief_complaint as string).length > 100) return "chief_complaint超过100字";
+  if ((result.present_illness as string).trim().length < 20) return "present_illness少于20字";
+  if (!Array.isArray(result.pending_fields) || result.pending_fields.length > 8) return "pending_fields数量必须为0至8";
+  for (const [index, item] of result.pending_fields.entries()) {
+    if (typeof item !== "string" || !item.trim() || item.length > 100) return `pending_fields[${index}]无效或超过100字`;
+  }
+  return "未识别的结构问题";
+};
+
+const boundDraftPendingFields = (value: unknown) => {
+  if (!value || typeof value !== "object") return value;
+  const draft = value as Record<string, unknown>;
+  if (!Array.isArray(draft.pending_fields)) return value;
+  return {
+    ...draft,
+    pending_fields: draft.pending_fields
+      .filter((item): item is string => typeof item === "string" && Boolean(item.trim()))
+      .map((item) => item.trim().slice(0, 100))
+      .slice(0, 8),
+  };
 };
 
 const extractionShape = {
@@ -153,6 +239,7 @@ const buildExtractionPrompt = (sourceText: string, currentPurpose: string) => [
 ].join("\n\n");
 
 const SOURCE_CHUNK_CHARS = 2600;
+const FACT_EXTRACTION_CONCURRENCY = 2;
 const arrivalContexts = ["外院转入我院", "本院直接入院", "本次到院身份待确认"] as const;
 type ArrivalContext = typeof arrivalContexts[number];
 const splitSourceText = (sourceText: string) => {
@@ -267,28 +354,52 @@ const normalizeAdmissionFacts = (extraction: FactExtraction): FactExtraction => 
 
 const extractFacts = async (baseUrl: string, apiKey: string, model: string, sourceText: string, currentPurpose: string, arrivalContext: ArrivalContext | "") => {
   const chunks = splitSourceText(sourceText);
-  const results = await Promise.all(chunks.map(async (chunk, chunkIndex) => {
+  const extractChunk = async (chunk: string, chunkIndex: number) => {
     let lastError: unknown;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
-        const retryInstruction = attempt === 0 ? "" : "\n\n上一次没有返回通过校验的完整JSON。请重新逐项核对并只返回完整JSON；不得省略sources、facts、pending_fields，也不得输出解释。";
-        const extracted = await requestJson(
+        const retryInstruction = attempt === 0 ? "" : `\n\n上一次未通过的具体原因：${lastError instanceof Error ? lastError.message : "结构不完整"}。请重新逐项核对并只返回完整JSON；不得省略sources、facts、pending_fields，也不得输出解释。当前分段已含有可见的临床资料，facts不得为空；检验、影像、病理、用药或医生意见至少应提取一条忠实事实，不得因与肿瘤时间线关系不明而丢弃整页。`;
+        const extracted = boundSourceEvidence(await requestJson(
           baseUrl,
           apiKey,
           model,
           buildExtractionPrompt(chunk, chunkIndex === 0 ? currentPurpose : "") + retryInstruction,
-          5000,
-          attempt === 0 ? 90_000 : 120_000,
-        );
-        if (!isValidFactExtraction(extracted)) throw new Error("结构不完整");
+          8500,
+          120_000,
+        ));
+        if (!isValidFactExtraction(extracted)) {
+          const value = extracted && typeof extracted === "object" ? extracted as Record<string, unknown> : {};
+          console.warn("[analyze] invalid fact extraction shape", {
+            chunk: chunkIndex + 1,
+            keys: Object.keys(value),
+            sources: Array.isArray(value.sources) ? value.sources.length : "not-array",
+            facts: Array.isArray(value.facts) ? value.facts.length : "not-array",
+            pendingFields: Array.isArray(value.pending_fields) ? value.pending_fields.length : "not-array",
+          });
+          throw new Error(`结构不完整：${factExtractionIssue(extracted)}`);
+        }
         return { part: withPrefix(extracted, chunkIndex), retried: attempt > 0 };
       } catch (error) {
         lastError = error;
+        console.warn("[analyze] fact extraction attempt failed", {
+          chunk: chunkIndex + 1,
+          attempt: attempt + 1,
+          error: error instanceof Error ? error.message : "unknown",
+        });
       }
     }
     const detail = lastError instanceof Error ? lastError.message : "未知错误";
     throw new Error(`第${chunkIndex + 1}段事实抽取失败：${detail}`);
-  }));
+  };
+  const results: Array<Awaited<ReturnType<typeof extractChunk>>> = Array(chunks.length);
+  let nextChunkIndex = 0;
+  const runWorker = async () => {
+    while (nextChunkIndex < chunks.length) {
+      const chunkIndex = nextChunkIndex++;
+      results[chunkIndex] = await extractChunk(chunks[chunkIndex], chunkIndex);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(FACT_EXTRACTION_CONCURRENCY, chunks.length) }, runWorker));
   const merged = normalizeAdmissionFacts(mergeExtractions(results.map((result) => result.part), currentPurpose, arrivalContext));
   if (!isValidFactExtraction(merged)) throw new Error("合并后的事实结构不完整");
   return { extraction: merged, chunkCount: chunks.length, retryCount: results.filter((result) => result.retried).length };
@@ -341,7 +452,9 @@ const missingNarrativeCoverage = (extraction: FactExtraction, candidate: unknown
   const covered = new Set(Array.isArray(ids) ? ids.filter((item): item is string => typeof item === "string") : []);
   const buckets = new Map<string, ExtractedFact[]>();
   extraction.facts
-    .filter((fact) => coreNarrativeEventTypes.has(fact.event_type) && fact.certainty !== "pending")
+    .filter((fact) => coreNarrativeEventTypes.has(fact.event_type)
+      && fact.certainty !== "pending"
+      && !(fact.event_type === "current_purpose" && /^(?:未提供|未确认|待核对)/.test(fact.event_time)))
     .forEach((fact) => {
       const key = `${fact.event_type}|${fact.event_time || "未提供"}`;
       buckets.set(key, [...(buckets.get(key) || []), fact]);
@@ -425,21 +538,27 @@ export async function POST(request: Request) {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
         const retryInstruction = attempt === 0 ? "" : `\n\n上一版未通过病历质量门禁：${lastDraftError instanceof Error ? lastDraftError.message : "结构或证据不完整"}。请重新生成完整JSON，重点修正该问题；不得删除已提供的首发、病理、治疗、复发、本次症状和实际收治事件。`;
-        const generated = await requestJson(baseUrl, apiKey, model, baseDraftPrompt + retryInstruction, 5400, 120000);
-        if (!isValidAdmissionDraft(generated)) throw new Error("草稿包结构不完整");
-        if (hasNarrativePresentationFailure(generated)) throw new Error("主诉或现病史出现不完整句、栏目或Markdown污染");
-        if (hasUnsupportedChiefComplaintDuration(cleanedSourceText, currentPurpose, generated)) throw new Error("主诉加入了资料未提供的持续时间");
-        if (hasCurrentAdmissionTransitionFailure(extraction, generated, cleanedSourceText)) throw new Error("草稿把外院转诊意见错写成本次入院结尾");
+        const generated = boundDraftPendingFields(await requestJson(baseUrl, apiKey, model, baseDraftPrompt + retryInstruction, 8500, 120000));
+        if (!isValidAdmissionDraft(generated)) throw new Error(`草稿包结构不完整：${admissionDraftIssue(generated)}`);
+        const qualityIssues: string[] = [];
+        if (hasNarrativePresentationFailure(generated)) qualityIssues.push("主诉或现病史出现不完整句、栏目或Markdown污染");
+        if (hasUnsupportedChiefComplaintDuration(cleanedSourceText, currentPurpose, generated)) qualityIssues.push("主诉加入了资料未提供的持续时间");
+        if (hasCurrentAdmissionTransitionFailure(extraction, generated, cleanedSourceText)) qualityIssues.push("草稿把外院转诊意见错写成本次入院结尾");
         const uncoveredBuckets = missingNarrativeCoverage(extraction, generated);
-        if (uncoveredBuckets.length) throw new Error(`现病史遗漏关键事件：${uncoveredBuckets.slice(0, 6).join("、")}`);
+        if (uncoveredBuckets.length) qualityIssues.push(`现病史遗漏关键事件：${uncoveredBuckets.slice(0, 6).join("、")}`);
         const boundedDraft = forceEvidenceBoundSections(extraction, generated);
-        if (hasExamLeakInPresentIllness(extraction, boundedDraft)) throw new Error("草稿把查体事件混入现病史");
-        if (hasPriorSpecialistExamLeak(extraction, boundedDraft)) throw new Error("草稿把既往外院查体混入本次专科查体");
+        if (hasExamLeakInPresentIllness(extraction, boundedDraft)) qualityIssues.push("草稿把查体事件混入现病史");
+        if (hasPriorSpecialistExamLeak(extraction, boundedDraft)) qualityIssues.push("草稿把既往外院查体混入本次专科查体");
+        if (qualityIssues.length) throw new Error(qualityIssues.join("；"));
         evidenceDraft = boundedDraft;
         draftRetryCount = attempt;
         break;
       } catch (error) {
         lastDraftError = error;
+        console.warn("[analyze] narrative draft attempt failed", {
+          attempt: attempt + 1,
+          error: error instanceof Error ? error.message : "unknown",
+        });
       }
     }
     if (!evidenceDraft) throw lastDraftError instanceof Error ? lastDraftError : new Error("草稿没有通过质量门禁");
