@@ -466,7 +466,7 @@ export default function EvaluationLabPage() {
   return <main className={styles.shell}>
     <header className={styles.header}>
       <a href="/" className={styles.brand}><span>OP</span><div><strong>OncoPilot</strong><small>A/B 测评实验室</small></div></a>
-      <div><span className={styles.version}>V0.15.0</span><a href="/">返回病历助手</a></div>
+      <div><span className={styles.version}>V0.15.1</span><a href="/">返回病历助手</a></div>
     </header>
 
     <section className={styles.hero}>
@@ -540,6 +540,6 @@ export default function EvaluationLabPage() {
       {boardResult && <div className={styles.actions}><button type="button" onClick={exportResult}>导出本次 JSON 记录</button><button type="button" onClick={reset}>开始新的试评</button></div>}
     </section>}
 
-    <footer className={styles.footer}><div><strong>OncoPilot Evaluation Lab V0.15.0</strong><span>小样本测评 · 用来发现问题，不用来宣称临床准确率</span></div><nav><a href="/">病历助手</a><a href="https://github.com/longjianw/oncopilot" target="_blank" rel="noreferrer">GitHub 迭代记录</a></nav></footer>
+    <footer className={styles.footer}><div><strong>OncoPilot Evaluation Lab V0.15.1</strong><span>小样本测评 · 用来发现问题，不用来宣称临床准确率</span></div><nav><a href="/">病历助手</a><a href="https://github.com/longjianw/oncopilot" target="_blank" rel="noreferrer">GitHub 迭代记录</a></nav></footer>
   </main>;
 }
