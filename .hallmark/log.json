@@ -1,0 +1,11 @@
+[
+  {
+    "date": "2026-08-15",
+    "scope": "app",
+    "genre": "modern-minimal",
+    "macrostructure": "Workbench",
+    "theme": "Cobalt clinical workbench",
+    "pages": ["/", "/evaluation-lab"],
+    "status": "verified-local"
+  }
+]

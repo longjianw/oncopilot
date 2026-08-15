@@ -72,7 +72,7 @@ const parseRoleReview = (value: unknown, role: { id: BoardRoleId; label: string 
   const recommendation = boundedText(candidate.recommendation, 420);
   const concern = boundedText(candidate.concern, 300);
   if (!headline || evidence.length < 2 || !recommendation || !concern) throw new Error(`${role.label}意见不完整`);
-  return { role: role.id, roleLabel: role.label, headline, evidence, recommendation, concern };
+  return { role: role.id, roleLabel: role.label, headline, evidence, recommendation, concern, model: boundedText(candidate.model, 80) };
 };
 
 const parseExecutive = (value: unknown): BoardDecision => {
@@ -88,13 +88,27 @@ const parseExecutive = (value: unknown): BoardDecision => {
 };
 
 type MeetingSummary = {
-  arm_a: { score: number; latency_seconds: number };
-  arm_b: { score: number; latency_seconds: number };
+  arm_a: { score: number; latency_seconds: number; p0: number };
+  arm_b: { score: number; latency_seconds: number; p0: number };
+};
+
+type ModelRuntime = {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  provider: "openai" | "ark";
 };
 
 const metricPattern = (arm: "A" | "B", value: number, unit: "分" | "秒") => {
   const escaped = String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`(?:回答)?${arm}(?:组|臂|方案|版本)?[^。；，,\\n]{0,20}${escaped}\\s*${unit}`, "i");
+};
+
+const claimsPositiveP0 = (text: string) => {
+  const withoutZeroStatements = text
+    .replace(/(?:两组|两臂|A\s*\/\s*B)?\s*P0(?:错误)?(?:计数)?\s*(?:均|都)?\s*(?:为|是|=)\s*0/gi, "")
+    .replace(/(?:无|没有|未见|未出现|未触发)\s*P0/gi, "");
+  return /(?:P0|硬失败|致命错误|致命缺陷|触发.{0,6}P0)/i.test(withoutZeroStatements);
 };
 
 const validateRoleMetrics = (review: BoardRoleReview, summary: MeetingSummary) => {
@@ -106,7 +120,14 @@ const validateRoleMetrics = (review: BoardRoleReview, summary: MeetingSummary) =
     metricPattern("A", summary.arm_b.latency_seconds, "秒").test(text) || metricPattern("B", summary.arm_a.latency_seconds, "秒").test(text)
   );
   if (swappedScore || swappedLatency) throw new Error("角色意见把A/B的总分或耗时归属写反");
+  if (summary.arm_a.p0 === 0 && summary.arm_b.p0 === 0 && claimsPositiveP0(text)) {
+    throw new Error("本轮P0计数均为0，角色意见不得编造P0");
+  }
 };
+
+const modelOptions = (runtime: ModelRuntime, maximum: number) => runtime.provider === "openai"
+  ? { maxOutputTokens: maximum, timeoutMs: 120000, reasoningEffort: "medium" as const, store: false, jsonObject: true }
+  : { maxOutputTokens: maximum, timeoutMs: 120000, thinking: "disabled" as const, jsonObject: true };
 
 const buildMeetingContext = (body: IncomingBody) => {
   const caseLabel = boundedText(body.case_label, 80) || "未命名试评";
@@ -128,11 +149,11 @@ const buildMeetingContext = (body: IncomingBody) => {
   return { armA, armB, summary };
 };
 
-const generateRoleReview = async (baseUrl: string, apiKey: string, model: string, summary: MeetingSummary, role: typeof roleDefinitions[number]) => {
+const generateRoleReview = async (runtime: ModelRuntime, summary: MeetingSummary, role: typeof roleDefinitions[number]) => {
   const prompt = [
     `你是OncoPilot内部产品评审会的${role.label}。`,
     role.mandate,
-    "这是同一高能力模型在隔离上下文中的多视角审阅，不是真实多人专家共识。只能使用下面的盲评汇总；看不到病例原文，也不得猜测A/B对应哪个产品。",
+    "你只能使用下面的盲评汇总；看不到病例原文，也不得猜测A/B对应哪个产品。人工填写的P0计数是唯一P0依据，不得根据低分或评语自行升级为P0。",
     "给出一个主判断，引用至少两条具体数字或评分差异作为证据，只推荐一个本轮优先动作，并指出一个可能误导结论的风险。recommendation直接写动作内容，不要重复‘本轮优先动作’标签。不要提出患者个体诊疗建议。",
     "只返回JSON：{\"headline\":\"\",\"evidence\":[\"\",\"\"],\"recommendation\":\"\",\"concern\":\"\"}",
     `盲评汇总：${JSON.stringify(summary)}`,
@@ -141,8 +162,9 @@ const generateRoleReview = async (baseUrl: string, apiKey: string, model: string
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       const retry = attempt === 0 ? "" : `\n\n上一版把A/B数字归属写反或结构不完整，未通过门禁。权威数据为：A总分${summary.arm_a.score}分、耗时${summary.arm_a.latency_seconds}秒；B总分${summary.arm_b.score}分、耗时${summary.arm_b.latency_seconds}秒。请完整重写并逐项核对。`;
-      const raw = await requestModel(baseUrl, apiKey, model, prompt + retry, { maxOutputTokens: 1800, timeoutMs: 120000, thinking: "disabled", jsonObject: true });
+      const raw = await requestModel(runtime.baseUrl, runtime.apiKey, runtime.model, prompt + retry, modelOptions(runtime, 1800));
       const review = parseRoleReview(parseModelJson(raw), role);
+      review.model = runtime.model;
       validateRoleMetrics(review, summary);
       return review;
     } catch (error) { lastError = error; }
@@ -150,7 +172,7 @@ const generateRoleReview = async (baseUrl: string, apiKey: string, model: string
   throw lastError instanceof Error ? lastError : new Error(`${role.label}意见未通过数字归属门禁`);
 };
 
-const generateExecutive = async (baseUrl: string, apiKey: string, model: string, summary: unknown, reviews: BoardRoleReview[], hasP0: boolean) => {
+const generateExecutive = async (runtime: ModelRuntime, summary: unknown, reviews: BoardRoleReview[], hasP0: boolean) => {
   const prompt = [
     "你是OncoPilot内部评审会的CEO。五个角色已经独立审阅同一份盲评汇总。",
     "你的任务不是追求表面共识，而是明确：这一轮是否足以支持产品迭代、最优先改什么、哪些分歧尚未解决、下一轮如何验证、出现什么情况必须停止发布或扩大试用。",
@@ -167,11 +189,14 @@ const generateExecutive = async (baseUrl: string, apiKey: string, model: string,
         "上一版未通过CEO质量门禁。请重新返回完整JSON，decision必须是简体中文自然语言，不能使用英文枚举码。",
         hasP0 ? "本轮存在P0，请在decision和next_sprint第一项中明确：停止扩大试用，先复现并修复P0；修复后才增加样本。" : "请按现有证据明确本轮优先级，不要编造P0。",
       ].join("\n");
-      const raw = await requestModel(baseUrl, apiKey, model, prompt + retry, { maxOutputTokens: 2400, timeoutMs: 120000, thinking: "disabled", jsonObject: true });
+      const raw = await requestModel(runtime.baseUrl, runtime.apiKey, runtime.model, prompt + retry, modelOptions(runtime, 2400));
       const candidate = parseExecutive(parseModelJson(raw));
       if (/^[A-Z0-9_ -]{3,}$/.test(candidate.decision)) throw new Error("CEO返回了机器枚举码而非中文结论");
       const priorityText = `${candidate.decision} ${candidate.nextSprint[0] || ""}`;
       if (hasP0 && !/(?:P0|硬失败|致命|停止.{0,12}(?:试用|发布|扩大)|修复.{0,12}P0)/i.test(priorityText)) throw new Error("CEO未把P0修复置于首位");
+      if (!hasP0 && claimsPositiveP0([candidate.decision, ...candidate.rationale, ...candidate.disagreements, ...candidate.nextSprint, ...candidate.stopConditions].join(" "))) {
+        throw new Error("本轮P0计数均为0，CEO不得编造P0");
+      }
       executive = candidate;
       break;
     } catch (error) { executiveError = error; }
@@ -185,16 +210,33 @@ export async function POST(request: Request) {
   try {
     const body = await request.json() as IncomingBody;
     const { armA, armB, summary } = buildMeetingContext(body);
-    const apiKey = process.env.ARK_CODING_API_KEY;
-    if (!apiKey) return Response.json({ error: "内部评审模型尚未配置。" }, { status: 503 });
-    const baseUrl = (process.env.ARK_CODING_BASE_URL || "https://ark.cn-beijing.volces.com/api/coding/v3").replace(/\/$/, "");
-    const model = process.env.ARK_REFERENCE_MODEL || process.env.ARK_CODING_MODEL || "deepseek-v4-pro";
+    const arkKey = process.env.ARK_CODING_API_KEY;
+    const openaiKey = process.env.OPENAI_API_KEY;
+    if (!arkKey || !openaiKey) return Response.json({ error: "多模型评审尚未完成配置。" }, { status: 503 });
+    const arkRuntime: ModelRuntime = {
+      apiKey: arkKey,
+      baseUrl: (process.env.ARK_CODING_BASE_URL || "https://ark.cn-beijing.volces.com/api/coding/v3").replace(/\/$/, ""),
+      model: process.env.ARK_REFERENCE_MODEL || process.env.ARK_CODING_MODEL || "deepseek-v4-pro",
+      provider: "ark",
+    };
+    const openaiBoardRuntime: ModelRuntime = {
+      apiKey: openaiKey,
+      baseUrl: (process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, ""),
+      model: process.env.OPENAI_BOARD_MODEL || "gpt-5.4",
+      provider: "openai",
+    };
+    const ceoRuntime: ModelRuntime = {
+      ...openaiBoardRuntime,
+      model: process.env.OPENAI_CEO_MODEL || process.env.OPENAI_EVAL_MODEL || "gpt-5.6-sol",
+    };
+    const runtimeForRole = (role: BoardRoleId) => role === "user_research" || role === "engineering" ? arkRuntime : openaiBoardRuntime;
 
     if (body.mode === "role") {
       const role = roleDefinitions.find((item) => item.id === body.role_id);
       if (!role) return Response.json({ error: "未知的公司会议角色。" }, { status: 400 });
-      const review = await generateRoleReview(baseUrl, apiKey, model, summary, role);
-      return Response.json({ result: { review, model, elapsedSeconds: Math.round((Date.now() - startedAt) / 100) / 10, sameModelReview: true } }, { headers: { "Cache-Control": "no-store" } });
+      const runtime = runtimeForRole(role.id);
+      const review = await generateRoleReview(runtime, summary, role);
+      return Response.json({ result: { review, model: runtime.model, elapsedSeconds: Math.round((Date.now() - startedAt) / 100) / 10 } }, { headers: { "Cache-Control": "no-store" } });
     }
 
     if (body.mode === "executive") {
@@ -203,13 +245,13 @@ export async function POST(request: Request) {
         const candidate = submitted.find((item) => item && typeof item === "object" && (item as Record<string, unknown>).role === role.id);
         return parseRoleReview(candidate, role);
       });
-      const executive = await generateExecutive(baseUrl, apiKey, model, summary, reviews, armA.p0Count + armB.p0Count > 0);
-      return Response.json({ result: { executive, model, elapsedSeconds: Math.round((Date.now() - startedAt) / 100) / 10, sameModelReview: true } }, { headers: { "Cache-Control": "no-store" } });
+      const executive = await generateExecutive(ceoRuntime, summary, reviews, armA.p0Count + armB.p0Count > 0);
+      return Response.json({ result: { executive, model: ceoRuntime.model, elapsedSeconds: Math.round((Date.now() - startedAt) / 100) / 10 } }, { headers: { "Cache-Control": "no-store" } });
     }
 
-    const reviews = await Promise.all(roleDefinitions.map((role) => generateRoleReview(baseUrl, apiKey, model, summary, role)));
-    const executive = await generateExecutive(baseUrl, apiKey, model, summary, reviews, armA.p0Count + armB.p0Count > 0);
-    return Response.json({ result: { reviews, executive, model, elapsedSeconds: Math.round((Date.now() - startedAt) / 100) / 10, sameModelReview: true } }, { headers: { "Cache-Control": "no-store" } });
+    const reviews = await Promise.all(roleDefinitions.map((role) => generateRoleReview(runtimeForRole(role.id), summary, role)));
+    const executive = await generateExecutive(ceoRuntime, summary, reviews, armA.p0Count + armB.p0Count > 0);
+    return Response.json({ result: { reviews, executive, ceoModel: ceoRuntime.model, models: [...new Set(reviews.map((review) => review.model))], elapsedSeconds: Math.round((Date.now() - startedAt) / 100) / 10, mixedModelReview: true } }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     const timeout = error instanceof Error && error.name === "TimeoutError";
     const message = error instanceof Error ? error.message : "内部评审会暂时失败。";

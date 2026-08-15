@@ -120,6 +120,7 @@ export type BoardRoleReview = {
   evidence: string[];
   recommendation: string;
   concern: string;
+  model: string;
 };
 
 export type BoardDecision = {
@@ -133,7 +134,8 @@ export type BoardDecision = {
 export type EvaluationBoardResult = {
   reviews: BoardRoleReview[];
   executive: BoardDecision;
-  model: string;
+  ceoModel: string;
+  models: string[];
   elapsedSeconds: number;
-  sameModelReview: true;
+  mixedModelReview: true;
 };

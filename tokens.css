@@ -1,0 +1,52 @@
+/* Hallmark · pre-emit critique: P5 H4 E5 S5 R5 V4 */
+:root {
+  --color-paper: oklch(0.985 0.006 235);
+  --color-paper-2: oklch(0.955 0.012 235);
+  --color-paper-3: oklch(0.925 0.018 235);
+  --color-ink: oklch(0.265 0.03 235);
+  --color-ink-2: oklch(0.42 0.025 235);
+  --color-muted: oklch(0.54 0.02 235);
+  --color-rule: oklch(0.84 0.018 235);
+  --color-rule-strong: oklch(0.72 0.035 235);
+  --color-accent: oklch(0.5 0.145 245);
+  --color-accent-strong: oklch(0.39 0.12 245);
+  --color-accent-soft: oklch(0.94 0.035 245);
+  --color-success: oklch(0.49 0.095 160);
+  --color-success-soft: oklch(0.94 0.026 160);
+  --color-warning: oklch(0.6 0.11 82);
+  --color-warning-soft: oklch(0.965 0.035 82);
+  --color-danger: oklch(0.53 0.11 28);
+  --color-danger-soft: oklch(0.95 0.03 28);
+  --color-on-accent: oklch(0.99 0.002 235);
+
+  --font-display: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", ui-sans-serif, sans-serif;
+  --font-body: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", ui-sans-serif, sans-serif;
+  --font-mono: "SFMono-Regular", "SF Mono", "Cascadia Code", ui-monospace, monospace;
+  --font-wordmark: var(--font-mono);
+
+  --space-3xs: 0.25rem;
+  --space-2xs: 0.5rem;
+  --space-xs: 0.75rem;
+  --space-sm: 1rem;
+  --space-md: 1.5rem;
+  --space-lg: 2rem;
+  --space-xl: 3rem;
+  --space-2xl: 4.5rem;
+  --space-3xl: 6rem;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-md: 1.125rem;
+  --text-lg: 1.375rem;
+  --text-xl: 1.75rem;
+  --text-2xl: clamp(2rem, 3vw, 3rem);
+  --text-display: clamp(2.35rem, 4vw, 4.5rem);
+
+  --radius-input: 0.5rem;
+  --radius-card: 0.75rem;
+  --radius-pill: 999px;
+  --rule: 1px solid var(--color-rule);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-short: 180ms;
+}

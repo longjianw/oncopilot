@@ -1,0 +1,9 @@
+{
+  "scannedAt": "2026-08-15",
+  "framework": "Next.js 16 / App Router",
+  "fontStack": "PingFang SC / system UI with mono operational register",
+  "palette": "Cobalt clinical workbench tokens in tokens.css",
+  "motion": "motion-cut; native CSS state transitions only",
+  "spacing": "named 4-point tokens",
+  "scope": ["/", "/evaluation-lab"]
+}
