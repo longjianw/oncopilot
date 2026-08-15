@@ -8,6 +8,15 @@ import {
   type DiagnosisReferenceStage,
   type PlanReferenceStage,
 } from "../lib/clinical-reference";
+import {
+  MAX_DOCUMENT_ITEMS,
+  MAX_PDF_PAGES,
+  compressDocumentImage,
+  documentPdfToImages,
+  isHeicDocument,
+  isPdfDocument,
+  type PreparedDocumentInput,
+} from "../lib/client-document-input";
 
 type Stage = "input" | "result";
 type UploadStatus = "preparing" | "recognizing" | "done" | "error";
@@ -23,12 +32,9 @@ type ChatEntry = { role: "user" | "assistant"; content: string; modelLabel?: str
 type GenerationStatus = "waiting" | "loading" | "done" | "error";
 type AnalysisResult = Record<DraftField, string> & { pending_fields: string[]; sources: Array<{ source_id: string; title: string; evidence: string }>; facts: Fact[]; review_items: ReviewItem[]; template_mode: boolean; template_name: string };
 type UploadItem = { id: string; name: string; file: File; preview?: string; status: UploadStatus; error?: string; model?: string };
-type PreparedInput = { name: string; file: File; preview?: string };
+type PreparedInput = PreparedDocumentInput;
 
-const MAX_ITEMS = 20;
-const MAX_PDF_PAGES = 20;
-const MAX_UPLOAD_BYTES = 480_000;
-const MAX_EDGE = 1600;
+const MAX_ITEMS = MAX_DOCUMENT_ITEMS;
 const MAX_SOURCE_CHARS = 32_000;
 const RECOGNITION_CONCURRENCY = 2;
 const arrivalContextOptions: Array<{ value: Exclude<ArrivalContext, "">; label: string; note: string }> = [
@@ -141,8 +147,8 @@ const parseEventStream = async (response: Response, onEvent: (name: string, payl
   }
 };
 
-const isHeic = (file: File) => file.type === "image/heic" || file.type === "image/heif" || /\.hei[cf]$/i.test(file.name);
-const isPdf = (file: File) => file.type === "application/pdf" || /\.pdf$/i.test(file.name);
+const isHeic = isHeicDocument;
+const isPdf = isPdfDocument;
 
 const readPayload = async (response: Response) => {
   const raw = await response.text();
@@ -151,55 +157,8 @@ const readPayload = async (response: Response) => {
   }
 };
 
-const canvasToFile = (canvas: HTMLCanvasElement, name: string, quality: number) => new Promise<File>((resolve, reject) => {
-  canvas.toBlob((blob) => blob ? resolve(new File([blob], name, { type: "image/jpeg" })) : reject(new Error("图片转换失败")), "image/jpeg", quality);
-});
-
-const compressImage = async (input: File, displayName: string) => {
-  let source: Blob = input;
-  if (isHeic(input)) {
-    const { default: heic2any } = await import("heic2any");
-    const converted = await heic2any({ blob: input, toType: "image/jpeg", quality: 0.88 });
-    source = Array.isArray(converted) ? converted[0] : converted;
-  }
-  const bitmap = await createImageBitmap(source);
-  const scale = Math.min(1, MAX_EDGE / Math.max(bitmap.width, bitmap.height));
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-  const context = canvas.getContext("2d");
-  if (!context) throw new Error("图片预处理失败");
-  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-  bitmap.close();
-  for (const quality of [0.82, 0.7, 0.58, 0.45]) {
-    const file = await canvasToFile(canvas, displayName.replace(/\.[^.]+$/, "") + ".jpg", quality);
-    if (file.size <= MAX_UPLOAD_BYTES) return file;
-  }
-  throw new Error("图片压缩后仍然过大，请裁剪到单页或拍得更近一些");
-};
-
-const pdfToImages = async (file: File): Promise<PreparedInput[]> => {
-  const pdfjs = await import("pdfjs-dist");
-  const worker = await import("pdfjs-dist/build/pdf.worker.min.mjs?url");
-  pdfjs.GlobalWorkerOptions.workerSrc = worker.default;
-  const pdf = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
-  if (pdf.numPages > MAX_PDF_PAGES) throw new Error(`PDF 共 ${pdf.numPages} 页；演示版一次最多识别 ${MAX_PDF_PAGES} 页，请拆分后上传。`);
-  const pages: PreparedInput[] = [];
-  for (let index = 1; index <= pdf.numPages; index += 1) {
-    const page = await pdf.getPage(index);
-    const viewport = page.getViewport({ scale: 1.7 });
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.round(viewport.width);
-    canvas.height = Math.round(viewport.height);
-    const context = canvas.getContext("2d");
-    if (!context) throw new Error("PDF 页面转换失败");
-    await page.render({ canvas, canvasContext: context, viewport }).promise;
-    const raw = await canvasToFile(canvas, `${file.name.replace(/\.pdf$/i, "")}-第${index}页.jpg`, 0.88);
-    const compressed = await compressImage(raw, raw.name);
-    pages.push({ name: `${file.name} · 第${index}页`, file: compressed, preview: URL.createObjectURL(compressed) });
-  }
-  return pages;
-};
+const compressImage = compressDocumentImage;
+const pdfToImages = documentPdfToImages;
 
 export default function Home() {
   const [stage, setStage] = useState<Stage>("input");
@@ -550,13 +509,13 @@ export default function Home() {
   const backgroundFacts = draft ? draft.facts.filter((fact) => ["past_history", "personal_history", "family_history", "allergy_history"].includes(fact.event_type)) : [];
 
   return <main className="site-shell">
-    <header className="site-header"><button type="button" className="wordmark" onClick={reset} aria-label="返回首页"><span>OP</span><div><strong>OncoPilot</strong><small>肿瘤入院记录草稿助手</small></div></button><div className="header-meta"><span className="version-pill">V0.14.0</span><a className="repository-link" href="/evaluation-lab">A/B 测评实验室</a><a className="repository-link" href="https://github.com/longjianw/oncopilot" target="_blank" rel="noreferrer">源码与迭代记录 ↗</a><div className="model-pill"><i /> 候选项需医生确认</div></div></header>
+    <header className="site-header"><button type="button" className="wordmark" onClick={reset} aria-label="返回首页"><span>OP</span><div><strong>OncoPilot</strong><small>肿瘤入院记录草稿助手</small></div></button><div className="header-meta"><span className="version-pill">V0.15.0</span><a className="repository-link" href="/evaluation-lab">A/B 测评实验室</a><a className="repository-link" href="https://github.com/longjianw/oncopilot" target="_blank" rel="noreferrer">迭代记录</a><div className="model-pill"><i /> AI候选需核对</div></div></header>
     <div className="stage-line two-steps" aria-label="当前流程"><span className={stage === "input" ? "active" : "done"}><b>1</b>放入资料</span><i /><span className={stage === "result" ? "active" : ""}><b>2</b>分阶段生成与核对</span></div>
     {stage === "input" && <section className="single-flow input-stage">
-      <div className="hero-copy"><span className="eyebrow">单入口 · 入院记录草稿包</span><h1>资料再少，也先给你<br /><em>一套可选择、可补全的草稿</em></h1><p>已提供的内容先整理成事实；未提供的部分按肿瘤类型生成选择项。你点选确认后，句子才会加入草稿，不用从空白开始默写。</p></div>
+      <div className="hero-copy"><span className="eyebrow">肿瘤入院记录</span><h1>整理入院资料</h1><p>上传图片、PDF或粘贴文字。系统先建立事件账本，再生成可编辑的病史、诊断和下一步参考。</p></div>
       <div className="input-card">
-        <div className="card-heading"><div><span>第一步只有这一个入口</span><h2>拍照、上传文件，或粘贴文字</h2></div><button type="button" onClick={() => { setSourceText(syntheticSample); setCurrentPurpose("进一步抗肿瘤治疗"); setError(""); }}>试试少量资料</button></div>
-        <p className="reference-status"><b>真实病例测试</b> 可使用已取得必要授权并完成身份字段去标识化的真实临床资料；资料会发送给第三方模型处理，输出仍需医生结合原始资料审核。</p>
+        <div className="card-heading"><div><span>资料输入</span><h2>拍照、上传文件或粘贴文字</h2></div><button type="button" onClick={() => { setSourceText(syntheticSample); setCurrentPurpose("进一步抗肿瘤治疗"); setError(""); }}>装入合成资料</button></div>
+        <p className="reference-status"><b>处理范围：</b>资料会发送给第三方模型。生成内容用于医生复核，不替代原始记录。</p>
         <label className="purpose-field"><span>本次来院目的 <b>可选，但建议填写</b></span><input value={currentPurpose} onChange={(event) => setCurrentPurpose(event.target.value)} maxLength={160} placeholder="例如：继续治疗、复查评估、处理新出现的症状……" /><small>这行用于区分既往住院、出院计划与本次就诊。</small></label>
         <div className="arrival-context" aria-label="本次到院关系"><span>本次到院关系 <b>建议选择</b></span><div>{arrivalContextOptions.map((option) => <button type="button" key={option.value} className={arrivalContext === option.value ? "selected" : ""} aria-pressed={arrivalContext === option.value} onClick={() => setArrivalContext(option.value)}><strong>{option.label}</strong><small>{option.note}</small></button>)}</div><small>例如外院病历写“建议转上级医院”时，选择“外院转入我院”后，草稿会以本院收治作为本次结尾；若资料只有外院转诊意见而未选择，系统会先要求确认，不生成错位草稿。</small></div>
         <div className="image-actions" aria-label="资料文件输入"><label className="image-action camera-action">拍照<input type="file" accept="image/*" capture="environment" multiple onChange={chooseDocuments} /></label><label className="image-action">上传图片或 PDF<input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif,application/pdf,.pdf" multiple onChange={chooseDocuments} /></label><span>最多 {MAX_ITEMS} 个资料页；PDF 最多 {MAX_PDF_PAGES} 页；HEIC 会先在本机转换</span></div>
@@ -567,19 +526,19 @@ export default function Home() {
         <button type="button" className="primary-action" disabled={sourceText.trim().length < 20 || loading || busy} onClick={analyze}>{loading ? <><i className="spinner" />正在分段核对事实并生成草稿（{analysisElapsed}秒）</> : <>生成入院记录草稿包 <b>→</b></>}</button>
         <p className="privacy-copy">系统会提供候选阴性项和查体模板，但只有你点击确认后才加入草稿。</p>
       </div>
-      <div className="output-promise three-items" aria-label="系统输出"><div><b>01</b><span><strong>先整理已知事实</strong><small>来源、时间、本次/既往、证据强度</small></span></div><div><b>02</b><span><strong>再给候选选项</strong><small>症状、病史、检查经过和专科查体</small></span></div><div><b>03</b><span><strong>点选后进入草稿</strong><small>保留人工判断，又不用从零书写</small></span></div></div>
+      <div className="output-promise three-items" aria-label="系统输出"><div><b>01</b><span><strong>事件账本</strong><small>时间、来源和就诊归属</small></span></div><div><b>02</b><span><strong>病历草稿</strong><small>主诉、现病史和背景病史</small></span></div><div><b>03</b><span><strong>诊断与下一步</strong><small>分阶段生成，逐项核对</small></span></div></div>
     </section>}
     {stage === "result" && draft && <section className="single-flow result-stage draft-package">
-      <div className="result-title"><div><span className="success-mark">✓</span><span><small>草稿骨架与候选项已生成</small><h1>先点选补全，再微调文字</h1></span></div><button type="button" className="copy-all" onClick={copyDraft}>{copied ? "已复制当前草稿" : unresolvedMarkers ? "复制当前草稿（含待完成标记）" : "复制当前草稿"}</button></div>
+      <div className="result-title"><div><span><small>草稿已生成</small><h1>核对并补充</h1></span></div><button type="button" className="copy-all" onClick={copyDraft}>{copied ? "已复制当前草稿" : unresolvedMarkers ? "复制草稿（含待完成标记）" : "复制当前草稿"}</button></div>
       {analysisNotice && <p className="analysis-notice">{analysisNotice}</p>}
       <div className="safety-banner"><strong>{draft.template_name}</strong><span>方括号是待完成项；下面的候选内容默认不算事实，只有点击后才加入对应草稿。</span></div>
       <section className="event-ledger">
-        <div className="ledger-heading"><div><span>临床事件账本</span><h2>资料时间轴</h2><p>每个事件保留时间、本次/既往归属、证据强度和来源；现病史遗漏关键事件时不直接展示。</p></div><div><strong>{timelineFacts.length}</strong><small>时间线事件</small><strong>{backgroundFacts.length}</strong><small>背景病史</small></div></div>
+        <div className="ledger-heading"><div><span>临床事件账本</span><h2>资料时间轴</h2><p>查看事件时间、就诊归属、证据强度和来源。关键事件未覆盖时，系统不展示现病史。</p></div><div><strong>{timelineFacts.length}</strong><small>时间线事件</small><strong>{backgroundFacts.length}</strong><small>背景病史</small></div></div>
         <details open><summary>查看临床时间轴</summary><div className="timeline-list">{timelineFacts.map((fact) => <article key={fact.fact_id}><div className="timeline-time"><strong>{fact.event_time}</strong><small>{eventTypeLabels[fact.event_type] || fact.event_type}</small></div><i /><div className="timeline-copy"><p>{fact.value}</p><small>{fact.encounter_scope === "current" ? "本次" : fact.encounter_scope === "prior" ? "既往" : "归属待核"} · {fact.certainty === "uncertain" ? "不确定" : fact.certainty === "pending" ? "待核对" : fact.certainty === "doctor_confirmed" ? "医生明确" : "资料明确"} · 来源 {fact.source_ids.join("、")}</small></div></article>)}</div></details>
         {backgroundFacts.length > 0 && <details><summary>查看基础病、旧手术、过敏等背景事件</summary><div className="background-ledger">{backgroundFacts.map((fact) => <div key={fact.fact_id}><b>{eventTypeLabels[fact.event_type] || fact.event_type}</b><span>{fact.value}<small>{fact.event_time} · 来源 {fact.source_ids.join("、")}</small></span></div>)}</div></details>}
       </section>
       {draft.review_items.length > 0 && <section className="guided-review">
-        <div className="guided-heading"><div><span>快速补全</span><h2>先选择，再补细节，最后重新成稿</h2><p>已选择 {selectedCount}/{draft.review_items.length} 项。每次点击会先写入对应模块；完成几项后可一键整理成连贯文字。</p></div><div className="guided-tools"><div className="choice-legend"><span className="positive">有 / 异常</span><span className="negative">无 / 正常</span><span>未问 / 未查</span></div><button type="button" className="ask-ai" onClick={() => openTemplateChat()}>问 AI 这个模板</button></div></div>
+        <div className="guided-heading"><div><span>补充资料</span><h2>选择已确认的内容</h2><p>已选择 {selectedCount}/{draft.review_items.length} 项。补充细节后可重新整理草稿。</p></div><div className="guided-tools"><div className="choice-legend"><span className="positive">有 / 异常</span><span className="negative">无 / 正常</span><span>未问 / 未查</span></div><button type="button" className="ask-ai" onClick={() => openTemplateChat()}>查看记录要求</button></div></div>
         <div className="review-groups">{reviewGroups.map(({ group, items }) => <section className="review-group" key={group}><h3>{group}</h3><div className="review-items">{items.map((item) => {
           const selectedOption = item.options.find((option) => option.option_id === selectedChoices[item.choice_id]);
           return <div className={`review-item ${selectedOption ? "answered" : ""}`} key={item.choice_id}><div className="review-question"><strong>{item.prompt}</strong><small>{item.help}</small><button type="button" onClick={() => openTemplateChat(item)}>这项怎么问？</button></div><div><div className="review-options">{item.options.map((option) => <button type="button" key={option.option_id} className={`${option.tone} ${selectedChoices[item.choice_id] === option.option_id ? "selected" : ""}`} onClick={() => selectReviewOption(item, option)}>{option.label}</button>)}</div>{selectedOption?.detail_prompt && <label className="detail-fill"><span>补充这项（可选）</span><input value={choiceDetails[item.choice_id] || ""} onChange={(event) => updateChoiceDetail(item, event.target.value)} maxLength={500} placeholder={selectedOption.detail_prompt} /><small>已加入：{sectionLabels.find(({ field }) => field === item.section)?.label}</small></label>}</div></div>;
@@ -587,7 +546,7 @@ export default function Home() {
         <div className="recompose-bar"><div><strong>选择和填空完成后</strong><span>让 AI 去重、调整顺序，并重新组织主诉、现病史和其他模块。</span>{recomposeNotice && <small>{recomposeNotice}</small>}</div><button type="button" disabled={recomposeLoading || confirmations().length === 0} onClick={recomposeDraft}>{recomposeLoading ? "正在重新整理…" : "一键重新整理草稿"}</button></div>
       </section>}
       <section className="clinical-reference-panel">
-        <div className="reference-heading"><div><span>诊断与下一步 · 分阶段生成</span><h2>一道一道生成，不再一次性端出整套答案</h2><p>时间轴和病史完成后，V4 Pro先单独整理诊断与依据；只有诊断阶段通过后，才生成当前优先问题、下一步和理由。</p></div><div className="reference-actions"><button type="button" disabled={referenceLoading} onClick={() => generateClinicalReference(draft)}>{referenceLoading ? `分阶段生成中 ${referenceElapsed}秒` : "重新分阶段生成"}</button><button type="button" disabled={!clinicalReference || Boolean(verificationLoading)} onClick={() => openReferenceChat("当前病例的诊断与下一步", "针对当前病例，我想进一步讨论：")} >继续问本病例</button><button type="button" disabled={!clinicalReference || Boolean(verificationLoading)} onClick={() => verifyClinicalReference("local")}>{verificationLoading === "local" ? "本地核验中…" : "核验已接入来源卡"}</button><button type="button" disabled={!clinicalReference || Boolean(verificationLoading)} onClick={() => verifyClinicalReference("web")}>{verificationLoading === "web" ? "联网核验中…" : "联网核验权威网页"}</button></div></div>
+        <div className="reference-heading"><div><span>诊断与下一步</span><h2>分阶段生成</h2><p>诊断与依据通过后，系统再生成当前优先问题、下一步和理由。</p></div><div className="reference-actions"><button type="button" disabled={referenceLoading} onClick={() => generateClinicalReference(draft)}>{referenceLoading ? `生成中 ${referenceElapsed}秒` : "重新生成"}</button><button type="button" disabled={!clinicalReference || Boolean(verificationLoading)} onClick={() => openReferenceChat("当前病例的诊断与下一步", "针对当前病例，我想进一步讨论：")} >继续讨论</button><button type="button" disabled={!clinicalReference || Boolean(verificationLoading)} onClick={() => verifyClinicalReference("local")}>{verificationLoading === "local" ? "本地核验中…" : "核验来源卡"}</button><button type="button" disabled={!clinicalReference || Boolean(verificationLoading)} onClick={() => verifyClinicalReference("web")}>{verificationLoading === "web" ? "联网核验中…" : "联网核验"}</button></div></div>
         <div className="generation-pipeline"><div className="done"><b>1</b><span><strong>事件账本</strong><small>已绑定来源</small></span></div><i /><div className="done"><b>2</b><span><strong>主诉与病史</strong><small>已通过完整性门禁</small></span></div><i /><div className={diagnosisStatus}><b>3</b><span><strong>初步诊断</strong><small>{diagnosisStatus === "loading" ? "V4 Pro正在整理" : diagnosisStatus === "done" ? "已完成" : diagnosisStatus === "error" ? "本次未完成" : "等待"}</small></span></div><i /><div className={planStatus}><b>4</b><span><strong>下一步与理由</strong><small>{planStatus === "loading" ? "V4 Pro正在分析" : planStatus === "done" ? "已完成" : planStatus === "error" ? "本次未完成" : "等待诊断阶段"}</small></span></div></div>
         {referenceLoading && <div className="reference-loading"><i className="spinner" /> {diagnosisStatus === "loading" ? "V4 Pro正在单独整理初步诊断、诊断依据与关键缺口" : "诊断阶段已完成，V4 Pro正在生成当前优先问题、下一步与理由"}，已等待 {referenceElapsed} 秒……</div>}
         {diagnosisStageResult && !clinicalReference && <div className="reference-content stage-preview"><div className="reference-state"><strong>诊断阶段已完成</strong><span>下一步正在独立生成；不需要等整套内容才能先看诊断。</span></div><div className="reference-grid"><article><h3>初步诊断与依据</h3><p><b>初步诊断：</b>{diagnosisStageResult.preliminary_diagnosis}</p><p><b>诊断依据：</b>{diagnosisStageResult.diagnostic_basis.join("；")}</p><p><b>鉴别诊断：</b>{diagnosisStageResult.differential_diagnosis.join("；") || "当前未必要机械罗列"}</p></article><article><h3>会改变诊断表达的关键缺口</h3><ul>{diagnosisStageResult.missing_prerequisites.map((item) => <li key={item}>{item}</li>)}</ul></article></div></div>}
@@ -614,6 +573,6 @@ export default function Home() {
       <button type="button" className="floating-chat" onClick={() => openTemplateChat()}>问 AI · 文书核对</button>
       {chatOpen && <aside className={`chat-drawer ${chatMode === "clinical_reference" ? "clinical-reference-chat" : "documentation-chat"}`} aria-label={chatMode === "clinical_reference" ? "本病例继续讨论窗口" : "AI文书核对窗口"}><div className="chat-header"><div><strong>{chatMode === "clinical_reference" ? "继续问本病例" : "问 AI · 文书核对"}</strong><small>{chatContext}</small></div><button type="button" onClick={() => setChatOpen(false)} aria-label="关闭聊天">×</button></div><div className="chat-boundary">{chatMode === "clinical_reference" ? "基于本病例结构化事实和本轮候选继续讨论。药物、剂量、溶媒、配伍和输注必须同时核对病情条件、院内药品信息与药师/上级审核；当前未接入本院药品字典时，系统不会编造成可直接发送的配液医嘱。" : "可以问“这项要核对什么、怎样记录”；AI不会替患者回答，也不做诊断和治疗建议。"}</div>{chatMode === "documentation" && <div className="chat-models" aria-label="回答模型">{chatModelOptions.map((option) => <button type="button" key={option.id} className={chatModel === option.id ? "selected" : ""} disabled={chatLoading} onClick={() => setChatModel(option.id)}><strong>{option.label}</strong><small>{option.note}</small></button>)}</div>}<div className="chat-messages">{chatMessages.length === 0 ? <div className="chat-empty"><p>例如：</p>{chatMode === "clinical_reference" ? <><button type="button" onClick={() => setChatInput("当前病例的抗感染方向有哪些候选？在决定具体药物前，我还必须核对哪些病情、病原学、肝肾功能、过敏与院内药学字段？")}>抗感染还要核对什么？</button><button type="button" onClick={() => setChatInput("如果上级建议某个抗菌药方案，开医嘱前应补齐哪些剂量、频次、溶媒、输注和配伍字段，避免护士退单？")}>避免护士退单要核对什么？</button></> : <><button type="button" onClick={() => setChatInput("区域淋巴结这一项，通常要记录哪些部位和查体特征？")}>区域淋巴结要记什么？</button><button type="button" onClick={() => setChatInput("一个阳性症状需要补充哪些时间和程度信息？")}>阳性症状怎么补细节？</button></>}</div> : chatMessages.map((message, index) => <div className={message.role} key={`${message.role}-${index}`}><div className="chat-copy">{renderChatContent(message.content)}</div>{message.role === "assistant" && message.modelLabel && <small className="chat-meta">{message.modelLabel} · {message.elapsedSeconds}秒</small>}</div>)}{chatLoading && <div className="assistant loading"><i className="spinner" />正在思考 {chatElapsed} 秒…</div>}</div><form onSubmit={sendChat}><textarea value={chatInput} onChange={(event) => setChatInput(event.target.value)} maxLength={1200} placeholder={chatMode === "clinical_reference" ? "例如：抗感染具体如何进一步判断？开立医嘱前还缺什么？" : "输入已授权并完成身份字段去标识化的临床资料……"} /><button type="submit" disabled={!chatInput.trim() || chatLoading}>发送</button></form></aside>}
     </section>}
-    <footer className="site-footer"><div><strong>OncoPilot V0.14.0</strong><span>公开测试版 · AI 输出须由有资质医生审核</span></div><nav aria-label="项目链接"><a href="/evaluation-lab">A/B 测评实验室</a><a href="https://github.com/longjianw/oncopilot" target="_blank" rel="noreferrer">GitHub 源码与版本记录</a><a href="https://github.com/longjianw/oncopilot/issues" target="_blank" rel="noreferrer">提交问题或建议</a></nav><p>支持经授权的真实病例测试；姓名、住院号等身份字段需先去标识化，资料将发送给第三方模型处理。</p></footer>
+    <footer className="site-footer"><div><strong>OncoPilot V0.15.0</strong><span>公开测试版 · AI 输出须由有资质医生审核</span></div><nav aria-label="项目链接"><a href="/evaluation-lab">A/B 测评实验室</a><a href="https://github.com/longjianw/oncopilot" target="_blank" rel="noreferrer">GitHub 源码与版本记录</a><a href="https://github.com/longjianw/oncopilot/issues" target="_blank" rel="noreferrer">提交问题或建议</a></nav><p>支持经授权的真实病例测试；姓名、住院号等身份字段需先去标识化，资料将发送给第三方模型处理。</p></footer>
   </main>;
 }

@@ -35,9 +35,9 @@ type ModelRequestOptions = {
   jsonObject?: boolean;
 };
 
-const requestBody = (model: string, prompt: string, options: ModelRequestOptions, stream = false) => ({
+const requestBody = (model: string, input: unknown, options: ModelRequestOptions, stream = false) => ({
   model,
-  input: prompt,
+  input,
   ...(stream ? { stream: true } : {}),
   ...(options.thinking ? { thinking: { type: options.thinking } } : {}),
   ...(options.reasoningEffort ? { reasoning: { effort: options.reasoningEffort } } : {}),
@@ -102,10 +102,14 @@ export async function* requestModelStream(baseUrl: string, apiKey: string, model
 }
 
 export async function requestModel(baseUrl: string, apiKey: string, model: string, prompt: string, options: ModelRequestOptions = {}) {
+  return requestModelInput(baseUrl, apiKey, model, prompt, options);
+}
+
+export async function requestModelInput(baseUrl: string, apiKey: string, model: string, input: unknown, options: ModelRequestOptions = {}) {
   const upstream = await fetch(`${baseUrl}/responses`, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify(requestBody(model, prompt, options)),
+    body: JSON.stringify(requestBody(model, input, options)),
     signal: AbortSignal.timeout(options.timeoutMs || 75000),
   });
   const raw = await upstream.text();
